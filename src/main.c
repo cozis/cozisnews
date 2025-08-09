@@ -161,7 +161,7 @@ static int query_routine(WL_State *state)
 
 int evaluate_template(HTTP_ResponseBuilder builder,
     WL_Program program, WL_Arena arena,
-    char *err, int errmax, int user_id)
+    char *err, int errmax, int user_id, int post_id)
 {
     //WL_dump_program(program);
 
@@ -186,10 +186,18 @@ int evaluate_template(HTTP_ResponseBuilder builder,
 
             case WL_VAR:
             if (WL_streq(result.str, "login_user_id", -1)) {
+
                 if (user_id < 0)
                     WL_pushnone(state);
                 else
                     WL_pushint(state, user_id);
+
+            } else if (WL_streq(result.str, "post_id", -1)) {
+
+                if (post_id < 0)
+                    WL_pushnone(state);
+                else
+                    WL_pushint(state, post_id);
             }
             break;
 
@@ -209,7 +217,7 @@ int evaluate_template(HTTP_ResponseBuilder builder,
     return 0;
 }
 
-void evaluate_template_2(HTTP_ResponseBuilder builder, WL_Arena arena, char *file, int user_id)
+void evaluate_template_2(HTTP_ResponseBuilder builder, WL_Arena arena, char *file, int user_id, int post_id)
 {
     http_response_builder_status(builder, 200);
     http_response_builder_header(builder, HTTP_STR("Content-Type: text/html"));
@@ -284,7 +292,7 @@ void evaluate_template_2(HTTP_ResponseBuilder builder, WL_Arena arena, char *fil
     WL_Program program = result.program;
 
     char err[1<<9];
-    if (evaluate_template(builder, program, arena, err, (int) sizeof(err), user_id) < 0) {
+    if (evaluate_template(builder, program, arena, err, (int) sizeof(err), user_id, post_id) < 0) {
         http_response_builder_undo(builder);
         http_response_builder_status(builder, 500);
         http_response_builder_body(builder, (HTTP_String) { err, (int) strlen(err) });
@@ -531,6 +539,12 @@ bool valid_post_content(HTTP_String str)
     return true;
 }
 
+bool valid_link(HTTP_String str)
+{
+    (void) str;
+    return true;
+}
+
 int main(void)
 {
     http_global_init();
@@ -546,7 +560,7 @@ int main(void)
 
     char *schema_data;
     long  schema_size;
-    ret = load_file("schema.sql", &schema_data, &schema_size);
+    ret = load_file("misc/schema.sql", &schema_data, &schema_size);
     if (ret < 0) {
         printf("Couldn't load schema\n");
         return -1;
@@ -738,28 +752,75 @@ int main(void)
         } else if (http_streq(path, HTTP_STR("/api/post"))) {
 
             if (req->method != HTTP_METHOD_POST) {
-                assert(0); // TODO
+                http_response_builder_status(builder, 405);
+                http_response_builder_done(builder);
+                continue;
             }
 
             if (user_id == -1) {
-                assert(0); // TODO
+                http_response_builder_status(builder, 303);
+                http_response_builder_header(builder, HTTP_STR("Location: /index"));
+                http_response_builder_done(builder);
+                continue;
             }
 
             HTTP_String title   = http_getparam(req->body, HTTP_STR("title"));
+            HTTP_String link    = http_getparam(req->body, HTTP_STR("link"));
             HTTP_String content = http_getparam(req->body, HTTP_STR("content"));
 
             title   = http_trim(title);
+            link    = http_trim(link);
             content = http_trim(content);
 
-            if (!valid_post_title(title) || !valid_post_content(content)) {
+            if (!valid_post_title(title) || !valid_link(link) || !valid_post_content(content)) {
                 assert(0); // TODO
             }
 
-            // TODO
+            if (content.len == 0 && link.len == 0) {
+                assert(0); // TODO
+            }
+
+            bool is_link = false;
+            if (link.len > 0) {
+                is_link = true;
+                content = link;
+            }
+
+            sqlite3_stmt *stmt;
+            int ret = sqlite3utils_prepare(db, &stmt, "INSERT INTO Posts(author, title, is_link, content) VALUES (?, ?, ?, ?)", user_id, title, is_link, content);
+            if (ret != SQLITE_OK) {
+                assert(0); // TODO
+            }
+
+            ret = sqlite3_step(stmt);
+            if (ret != SQLITE_DONE) {
+                assert(0); // TODO
+            }
+
+            ret = sqlite3_finalize(stmt);
+            if (ret != SQLITE_OK) {
+                assert(0); // TODO
+            }
+
+            int64_t tmp = sqlite3_last_insert_rowid(db);
+            if (tmp < 0 || tmp > INT_MAX) {
+                assert(0); // TODO
+            }
+            int post_id = (int) tmp;
+
+            char location[1<<9];
+            ret = snprintf(location, sizeof(location), "Location: /post?id=%d", post_id);
+            if (ret < 0 || ret >= (int) sizeof(location)) {
+                assert(0); // TODO
+            }
+
+            http_response_builder_status(builder, 303);
+            http_response_builder_header(builder, (HTTP_String) { location, ret });
+            http_response_builder_done(builder);
 
         } else if (http_streq(path, HTTP_STR("/index"))) {
 
-            evaluate_template_2(builder, arena, "pages/index.wl", user_id);
+            evaluate_template_2(builder, arena, "pages/index.wl", user_id, -1);
 
         } else if (http_streq(path, HTTP_STR("/write"))) {
 
@@ -771,7 +832,7 @@ int main(void)
                 continue;
             }
 
-            evaluate_template_2(builder, arena, "pages/write.wl", user_id);
+            evaluate_template_2(builder, arena, "pages/write.wl", user_id, -1);
 
         } else if (http_streq(path, HTTP_STR("/login"))) {
 
@@ -783,7 +844,7 @@ int main(void)
                 continue;
             }
 
-            evaluate_template_2(builder, arena, "pages/login.wl", user_id);
+            evaluate_template_2(builder, arena, "pages/login.wl", user_id, -1);
 
         } else if (http_streq(path, HTTP_STR("/signup"))) {
 
@@ -795,15 +856,55 @@ int main(void)
                 continue;
             }
 
-            evaluate_template_2(builder, arena, "pages/signup.wl", user_id);
+            evaluate_template_2(builder, arena, "pages/signup.wl", user_id, -1);
 
-        } else if (http_streq(path, HTTP_STR("/thread"))) {
+        } else if (http_streq(path, HTTP_STR("/post"))) {
 
-            evaluate_template_2(builder, arena, "pages/thread.wl", user_id);
+            HTTP_String idstr = http_getparam(req->url.query, HTTP_STR("id"));
+
+            char buf[32];
+            if (idstr.len == 0 || idstr.len >= (int) sizeof(buf)) {
+                evaluate_template_2(builder, arena, "pages/notfound.wl", user_id, -1);
+                continue;
+            }
+            memcpy(buf, idstr.ptr, idstr.len);
+            buf[idstr.len] = '\0';
+
+            int post_id = atoi(buf);
+            if (post_id == 0) {
+                evaluate_template_2(builder, arena, "pages/notfound.wl", user_id, -1);
+                continue;
+            }
+
+            sqlite3_stmt *stmt;
+            int ret = sqlite3utils_prepare(db, &stmt, "SELECT COUNT(*) FROM Posts WHERE id=?", post_id);
+            if (ret != SQLITE_OK) {
+                assert(0); // TODO
+            }
+
+            ret = sqlite3_step(stmt);
+            if (ret != SQLITE_ROW) {
+                assert(0); // TODO
+            }
+            int64_t num = sqlite3_column_int64(stmt, 0);
+
+            ret = sqlite3_finalize(stmt);
+            if (ret != SQLITE_OK) {
+                assert(0); // TODO
+            }
+
+            if (num < 0) {
+                assert(0); // TODO
+            }
+
+            if (num == 0)
+                evaluate_template_2(builder, arena, "pages/notfound.wl", user_id, -1);
+            else
+                evaluate_template_2(builder, arena, "pages/post.wl", user_id, post_id);
 
         } else {
 
-            evaluate_template_2(builder, arena, "pages/notfound.wl", user_id);
+            evaluate_template_2(builder, arena, "pages/notfound.wl", user_id, -1);
         }
     }
 

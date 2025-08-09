@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS Users (
 CREATE TABLE IF NOT EXISTS Posts (
     id                  INTEGER  PRIMARY KEY,
     author              INTEGER  NOT NULL,
+    title               TEXT     NOT NULL,
     is_link             BOOLEAN  NOT NULL,
     content             TEXT     NOT NULL,
     submit_time         DATETIME DEFAULT CURRENT_TIMESTAMP,

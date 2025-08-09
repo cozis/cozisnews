@@ -1,6 +1,23 @@
+ifeq ($(OS),Windows_NT)
+    EXT = .exe
+	LFLAGS = -lws2_32
+else
+	EXT = .out
+	LFLAGS =
+endif
 
-all: sqlite3.o
-	gcc main.c variadic.c sqlite3utils.c chttp.c WL.c sqlite3.o -o main -Wall -Wextra -g3 -O0 -lws2_32
+CFLAGS = -Wall -Wextra -O0 -g3 -I3p
 
-sqlite3.o:
-	gcc -c sqlite3.c -o sqlite3.o
+HFILES = $(shell find src 3p -name "*.h")
+CFILES = $(filter-out 3p/sqlite3.c, $(shell find src 3p -name "*.c"))
+
+all: cozisnews$(EXT)
+
+cozisnews$(EXT): $(CFILES) $(HFILES) sqlite3.o
+	gcc -o $@ $(CFILES) sqlite3.o $(CFLAGS) $(LFLAGS)
+
+sqlite3.o: 3p/sqlite3.c
+	gcc -o $@ -c $<
+
+clean:
+	rm *.o *.out *.exe

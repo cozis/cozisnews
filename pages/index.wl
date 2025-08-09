@@ -1,10 +1,9 @@
 include "pages/page.wl"
 
-let posts = [
-    { title: "Show HN: Kitten TTS - 25MB CPU-Only, Open-Source TTS Model",   date: "3 hours ago",    num_comments: 127, link: "https://github.com/KittenML/KittenTTS" },
-    { title: "Open models by OpenAI",                                        date: "15 hours ago",   num_comments: 651, link: "https://openai.com/open-models/"       },
-    { title: "Anthropic rejects the main developer of the library they use", date: "40 minutes ago", num_comments: 437, link: "https://grell.dev/blog/ai_rejection"   }
-]
+let posts = $query("SELECT id, title, is_link, content, 0 as num_comments, CURRENT_TIMESTAMP as date FROM Posts")
+
+if posts == none:
+    posts = []
 
 let style = 
     <style>
@@ -35,15 +34,27 @@ let style =
 
 let main =
     <main>
-        \for post in posts:
+
+        \if len(posts) == 0:
+            <div>There are no posts yet!</div>
+
+        \for post in posts: {
+
+            let link
+            if post.is_link != 0:
+                link = post.content
+            else
+                link = ["/post?id=", post.id]
+
             <div class="item">
                 <div>
-                    <a href=post.link>\post.title</a>
+                    <a href=link>\post.title</a>
                 </div>
                 <div>
-                    <span>\post.date</span> | <span><a href="/thread">\post.num_comments comments</a></span>
+                    <span>\post.date</span> | <span><a href=link>\post.num_comments comments</a></span>
                 </div>
             </div>
+        }
     </main>
 
 page("Index", $login_user_id, style, main)
