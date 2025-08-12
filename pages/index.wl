@@ -48,10 +48,10 @@ let main =
 
             <div class="item">
                 <div>
-                    <a href=link>\post.title</a>
+                    <a href=\'"'\link\'"'>\post.title</a>
                 </div>
                 <div>
-                    <span>\post.date</span> | <span><a href=link>\post.num_comments comments</a></span>
+                    <span>\post.date</span> | <span><a href=\'"'\link\'"'>\post.num_comments comments</a></span>
                 </div>
             </div>
         }

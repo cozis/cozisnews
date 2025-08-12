@@ -1,5 +1,5 @@
 
-fun page(title, login_user_id, style, main)
+procedure page(title, login_user_id, style, main)
     <html>
     <head>
         <title>CN - \title</title>
