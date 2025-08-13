@@ -876,6 +876,7 @@ int main(void)
             }
 
             HTTP_String parent_post_str = http_getparam(req->body, HTTP_STR("parent_post"), &arena);
+            HTTP_String parent_comment_str = http_getparam(req->body, HTTP_STR("parent_comment"), &arena);
             HTTP_String content = http_getparam(req->body, HTTP_STR("content"), &arena);
 
             int parent_post;
@@ -893,6 +894,21 @@ int main(void)
                 }
             }
 
+            int parent_comment;
+            {
+                char buf[32];
+                if (parent_comment_str.len >= (int) sizeof(buf))
+                    parent_comment = -1;
+                else {
+                    memcpy(buf, parent_comment_str.ptr, parent_comment_str.len);
+                    buf[parent_comment_str.len] = '\0';
+
+                    parent_comment = atoi(buf);
+                    if (parent_comment == 0)
+                        parent_comment = -1;
+                }
+            }
+
             content = http_trim(content);
             if (!valid_comment_content(content)) {
                 assert(0); // TODO
@@ -902,8 +918,12 @@ int main(void)
                 assert(0); // TODO
             }
 
+            int ret;
             sqlite3_stmt *stmt;
-            int ret = sqlite3utils_prepare(db, &stmt, "INSERT INTO Comments(author, content, parent_post) VALUES (?, ?, ?)", user_id, content, parent_post);
+            if (parent_comment == -1)
+                ret = sqlite3utils_prepare(db, &stmt, "INSERT INTO Comments(author, content, parent_post) VALUES (?, ?, ?)", user_id, content, parent_post);
+            else
+                ret = sqlite3utils_prepare(db, &stmt, "INSERT INTO Comments(author, content, parent_post, parent_comment) VALUES (?, ?, ?, ?)", user_id, content, parent_post, parent_comment);
             if (ret != SQLITE_OK) {
                 assert(0); // TODO
             }
@@ -1009,13 +1029,10 @@ int main(void)
                 assert(0); // TODO
             }
 
-            if (num == 0) {
-                printf("post with id %d does not exist\n", post_id); // TODO
+            if (num == 0)
                 evaluate_template_2(builder, arena, "pages/notfound.wl", user_id, -1);
-            } else {
-                printf("Evaluating template\n");
+            else
                 evaluate_template_2(builder, arena, "pages/post.wl", user_id, post_id);
-            }
 
         } else {
 

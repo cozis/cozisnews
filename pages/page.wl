@@ -2,6 +2,7 @@
 procedure page(title, login_user_id, style, main)
     <html>
     <head>
+        <meta charset="UTF-8" />
         <title>CN - \title</title>
         <style>
             body {

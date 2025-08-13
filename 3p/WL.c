@@ -1,6 +1,6 @@
 #include <stdio.h>
-#include <stdint.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include "wl.h"
@@ -273,6 +273,7 @@ typedef enum {
     TOKEN_OPER_DIV,
     TOKEN_OPER_MOD,
     TOKEN_OPER_ASS,
+    TOKEN_OPER_SHOVEL,
     TOKEN_PAREN_OPEN,
     TOKEN_PAREN_CLOSE,
     TOKEN_BRACKET_OPEN,
@@ -319,6 +320,7 @@ typedef enum {
     NODE_OPER_MUL,
     NODE_OPER_DIV,
     NODE_OPER_MOD,
+    NODE_OPER_SHOVEL,
     NODE_VALUE_INT,
     NODE_VALUE_FLOAT,
     NODE_VALUE_STR,
@@ -440,6 +442,7 @@ static void write_token(Writer *w, Token token)
         case TOKEN_OPER_MUL     : write_text(w, S("*"));         break;
         case TOKEN_OPER_DIV     : write_text(w, S("/"));         break;
         case TOKEN_OPER_MOD     : write_text(w, S("%"));         break;
+        case TOKEN_OPER_SHOVEL  : write_text(w, S("<<"));        break;
         case TOKEN_PAREN_OPEN   : write_text(w, S("("));         break;
         case TOKEN_PAREN_CLOSE  : write_text(w, S(")"));         break;
         case TOKEN_BRACKET_OPEN : write_text(w, S("["));         break;
@@ -677,6 +680,7 @@ static Token next_token(Parser *p)
         return (Token) { .type=TOKEN_VALUE_STR, .sval=(String) { .ptr=buf, .len=len } };
     }
 
+    if (consume_str(&p->s, S("<<"))) return (Token) { .type=TOKEN_OPER_SHOVEL };
     if (consume_str(&p->s, S("=="))) return (Token) { .type=TOKEN_OPER_EQL };
     if (consume_str(&p->s, S("!="))) return (Token) { .type=TOKEN_OPER_NQL };
     if (consume_str(&p->s, S("<")))  return (Token) { .type=TOKEN_OPER_LSS };
@@ -1014,6 +1018,11 @@ static int precedence(Token t, int flags)
     switch (t.type) {
 
         case TOKEN_OPER_ASS:
+        return 1;
+
+        case TOKEN_OPER_SHOVEL:
+        if (flags & IGNORE_LSS)
+            return -1;
         return 1;
 
         case TOKEN_OPER_EQL:
@@ -1435,7 +1444,8 @@ static Node *parse_expr_inner(Parser *p, Node *left, int min_prec, int flags)
             case TOKEN_OPER_MUL: parent->type = NODE_OPER_MUL; break;
             case TOKEN_OPER_DIV: parent->type = NODE_OPER_DIV; break;
             case TOKEN_OPER_MOD: parent->type = NODE_OPER_MOD; break;
-            default: 
+            case TOKEN_OPER_SHOVEL: parent->type = NODE_OPER_SHOVEL; break;
+            default:
             parser_report(p, "Operator not implemented");
             return NULL;
         }
@@ -2485,6 +2495,8 @@ static void cg_pop_scope(Codegen *cg)
     ASSERT(cg->num_scopes > 0);
     Scope *scope = &cg->scopes[cg->num_scopes-1];
 
+    ASSERT(scope->type == SCOPE_PROC || scope->type == SCOPE_GLOBAL || scope->max_vars == 0);
+
     Scope *parent_scope = NULL;
     if (cg->num_scopes > 1)
         parent_scope = &cg->scopes[cg->num_scopes-2];
@@ -2493,6 +2505,8 @@ static void cg_pop_scope(Codegen *cg)
 
         UnpatchedCall *call = scope->calls;
         scope->calls = call->next;
+
+        ASSERT(call - cg->calls >= 0 && call - cg->calls < MAX_UNPATCHED_CALLS);
 
         Symbol *sym = cg_find_symbol(cg, call->name, true);
 
@@ -2514,6 +2528,12 @@ static void cg_pop_scope(Codegen *cg)
         }
 
         cg_patch_u32(cg, call->off, sym->off);
+
+        call->next = cg->free_list_calls;
+        cg->free_list_calls = call;
+
+        // TODO: remove
+        ASSERT(cg->scopes[cg->num_scopes-1].calls == NULL || (cg->scopes[cg->num_scopes-1].calls - cg->calls >= 0 && cg->scopes[cg->num_scopes-1].calls - cg->calls < MAX_UNPATCHED_CALLS));
     }
 
     cg->num_syms = scope->idx_syms;
@@ -2531,9 +2551,13 @@ static void cg_append_unpatched_call(Codegen *cg, String name, int p)
     UnpatchedCall *call = cg->free_list_calls;
     cg->free_list_calls = call->next;
 
-    call->name = name;
-    call->off = p;
+    ASSERT(call - cg->calls >= 0 && call - cg->calls < MAX_UNPATCHED_CALLS);
 
+    call->name = name;
+    call->off  = p;
+    call->next = NULL;
+
+    ASSERT(cg->num_scopes > 0);
     Scope *scope = &cg->scopes[cg->num_scopes-1];
 
     call->next = scope->calls;
@@ -2582,6 +2606,9 @@ static void walk_node(Codegen *cg, Node *node);
 
 static void walk_expr_node(Codegen *cg, Node *node, bool one)
 {
+    // TODO: remove
+    ASSERT(cg->scopes[cg->num_scopes-1].calls == NULL || (cg->scopes[cg->num_scopes-1].calls - cg->calls >= 0 && cg->scopes[cg->num_scopes-1].calls - cg->calls < MAX_UNPATCHED_CALLS));
+
     switch (node->type) {
 
         case NODE_NESTED:
@@ -2652,6 +2679,23 @@ static void walk_expr_node(Codegen *cg, Node *node, bool one)
                 cg_report(cg, "Assignment left side can't be assigned to");
                 return;
             }
+        }
+        break;
+
+        case NODE_OPER_SHOVEL:
+        {
+            Node *dst = node->left;
+            Node *src = node->right;
+
+            walk_expr_node(cg, node->left, true);
+
+            cg_push_scope(cg, SCOPE_ASSIGNMENT);
+            walk_expr_node(cg, node->right, true);
+            cg_pop_scope(cg);
+
+            cg_write_opcode(cg, OPCODE_APPEND);
+            if (!one)
+                cg_write_opcode(cg, OPCODE_POP);
         }
         break;
 
@@ -2871,6 +2915,9 @@ static void walk_expr_node(Codegen *cg, Node *node, bool one)
 
 static void walk_node(Codegen *cg, Node *node)
 {
+    // TODO: remove
+    ASSERT(cg->scopes[cg->num_scopes-1].calls == NULL || (cg->scopes[cg->num_scopes-1].calls - cg->calls >= 0 && cg->scopes[cg->num_scopes-1].calls - cg->calls < MAX_UNPATCHED_CALLS));
+
     switch (node->type) {
 
         case NODE_GLOBAL:
@@ -2919,7 +2966,7 @@ static void walk_node(Codegen *cg, Node *node)
             walk_node(cg, node->proc_body);
             cg_write_opcode(cg, OPCODE_RET);
 
-            cg_patch_u8 (cg, off2, count_function_vars(cg));
+            cg_patch_u8 (cg, off2, cg->scopes[cg->num_scopes-1].max_vars);
             cg_patch_u32(cg, off0, cg_current_offset(cg));
 
             cg_pop_scope(cg);
@@ -3081,12 +3128,22 @@ static void walk_node(Codegen *cg, Node *node)
     }
 }
 
-static Codegen init_codegen(char *codebuf, int codecap,
-    char *databuf, int datacap, char *errmsg, int errcap)
+#define WL_MAGIC 0xFEEDBEEF
+
+static int codegen(Node *node, char *dst, int cap, char *errmsg, int errcap)
 {
-    Codegen c = {
-        .code = { codebuf, codecap, 0 },
-        .data = { databuf, datacap, 0 },
+    char *hdr;
+    if (cap < SIZEOF(uint32_t) * 3)
+        hdr = NULL;
+    else {
+        hdr = dst;
+        dst += SIZEOF(uint32_t) * 3;
+        cap -= SIZEOF(uint32_t) * 3;
+    }
+
+    Codegen cg = {
+        .code = { dst,         cap/2, 0 },
+        .data = { dst + cap/2, cap/2, 0 },
         .num_scopes = 0,
         .err = false,
         .errmsg = errmsg,
@@ -3094,28 +3151,10 @@ static Codegen init_codegen(char *codebuf, int codecap,
         .data_off = -1,
     };
 
-    c.free_list_calls = c.calls;
+    cg.free_list_calls = cg.calls;
     for (int i = 0; i < MAX_UNPATCHED_CALLS-1; i++)
-        c.calls[i].next = &c.calls[i+1];
-    c.calls[MAX_UNPATCHED_CALLS-1].next = NULL;
-
-    return c;
-}
-
-#define WL_MAGIC 0xFEEDBEEF
-
-static int codegen(Node *node, char *dst, int cap, char *errmsg, int errcap)
-{
-    char *hdr;
-    if (cap < sizeof(uint32_t) * 3)
-        hdr = NULL;
-    else {
-        hdr = dst;
-        dst += sizeof(uint32_t) * 3;
-        cap -= sizeof(uint32_t) * 3;
-    }
-
-    Codegen cg = init_codegen(dst, cap/2, dst + cap/2, cap/2, errmsg, errcap);
+        cg.calls[i].next = &cg.calls[i+1];
+    cg.calls[MAX_UNPATCHED_CALLS-1].next = NULL;
 
     cg_push_scope(&cg, SCOPE_GLOBAL);
     cg_write_opcode(&cg, OPCODE_VARS);
@@ -3141,7 +3180,7 @@ static int codegen(Node *node, char *dst, int cap, char *errmsg, int errcap)
             memmove(dst + cg.code.len, dst + cap/2, cg.data.len);
     }
 
-    return cg.code.len + cg.data.len + sizeof(uint32_t) * 3;
+    return cg.code.len + cg.data.len + SIZEOF(uint32_t) * 3;
 }
 
 static int write_instr(Writer *w, char *src, int len, String data)
@@ -3392,12 +3431,17 @@ static int write_instr(Writer *w, char *src, int len, String data)
         case OPCODE_SELECT:
         write_text(w, S("SELECT\n"));
         return 1;
+
+        default:
+        write_text(w, S("byte "));
+        write_text_s64(w, src[0]);
+        return 1;
     }
 
     return -1;
 }
 
-int wl_dump_program(WL_Program program, char *dst, int cap)
+static int write_program(WL_Program program, char *dst, int cap)
 {
     if (program.len < 3 * sizeof(uint32_t))
         return -1;
@@ -3431,6 +3475,30 @@ int wl_dump_program(WL_Program program, char *dst, int cap)
     }
 
     return w.len;
+}
+
+void wl_dump_program(WL_Program program)
+{
+    char buf[1<<10];
+    int len = write_program(program, buf, SIZEOF(buf));
+
+    if (len < 0) {
+        printf("Invalid program\n");
+        return;
+    }
+
+    if (len > SIZEOF(buf)) {
+        char *p = malloc(len+1);
+        if (p == NULL) {
+            printf("Out of memory\n");
+            return;
+        }
+        write_program(program, p, len);
+        p[len] = '\0';
+        fwrite(p, 1, len, stdout);
+    } else {
+        fwrite(buf, 1, len, stdout);
+    }
 }
 
 /////////////////////////////////////////////////////////////////////////
@@ -3969,17 +4037,19 @@ static Value value_select(Value set, Value key, Error *err)
         return VALUE_ERROR;
     }
 
-    char keybuf[1<<8];
-    int keylen = value_convert_to_str(key, keybuf, SIZEOF(keybuf));
-    keylen = MIN(keylen, SIZEOF(keybuf)-1);
-    keybuf[keylen] = '\0';
+    char key_buf[1<<8];
+    int key_len = value_convert_to_str(key, key_buf, SIZEOF(key_buf));
+    if (key_len > SIZEOF(key_buf)-1)
+        key_len = SIZEOF(key_buf)-1;
+    key_buf[key_len] = '\0';
 
-    char setbuf[1<<8];
-    int setlen = value_convert_to_str(set, setbuf, SIZEOF(setbuf));
-    setlen = MIN(setlen, SIZEOF(setbuf)-1);
-    setbuf[setlen] = '\0';
+    char set_buf[1<<8];
+    int set_len = value_convert_to_str(set, set_buf, SIZEOF(set_buf));
+    if (set_len > SIZEOF(set_buf)-1)
+        set_len = SIZEOF(set_buf)-1;
+    set_buf[set_len] = '\0';
 
-    REPORT(err, "Invalid key '%s' used in access to map '%s'", keybuf, setbuf);
+    REPORT(err, "Invalid key '%s' used in access to map '%s'", key_buf, set_buf);
     return VALUE_ERROR;
 }
 
@@ -4680,6 +4750,21 @@ static void rt_pop_group(WL_Runtime *rt)
     rt->stack = rt->groups[--rt->num_groups];
 }
 
+static void value_print(Value v)
+{
+    char buf[1<<8];
+    int len = value_convert_to_str(v, buf, SIZEOF(buf));
+    if (len < SIZEOF(buf))
+        fwrite(buf, 1, len, stdout);
+    else {
+        len = SIZEOF(buf)-1;
+        fwrite(buf, 1, len, stdout);
+        fprintf(stdout, " [...]");
+    }
+    putc('\n', stdout);
+    fflush(stdout);
+}
+
 static void step(WL_Runtime *rt)
 {
     switch (rt_read_u8(rt)) {
@@ -4872,14 +4957,6 @@ static void step(WL_Runtime *rt)
         v1 = rt->values[rt->stack-1];
         t = value_type(v1);
         if (t != TYPE_ARRAY && t != TYPE_MAP) {
-            {
-                char buf[1<<9];
-                int len = value_convert_to_str(v1, buf, SIZEOF(buf));
-                if (len > SIZEOF(buf)-1)
-                    len = SIZEOF(buf)-1;
-                buf[len] = '\0';
-                printf("len on (%s) type %d\n", buf, value_type(v1)); // TODO
-            }
             REPORT(&rt->err, "Invalid operation 'len' on non-aggregate value");
             rt->state = RUNTIME_ERROR;
             break;
@@ -5025,7 +5102,7 @@ WL_EvalResult wl_runtime_eval(WL_Runtime *rt)
             case RUNTIME_SYSVAR:
             {
                 ASSERT(rt->stack >= rt->stack_before_user);
-                
+
                 int pushed_by_user = rt->stack - rt->stack_before_user;
                 if (pushed_by_user > 1) {
                     REPORT(&rt->err, "Invalid API usage");
@@ -5090,11 +5167,17 @@ WL_EvalResult wl_runtime_eval(WL_Runtime *rt)
             else {
                 int len = value_convert_to_str(v, rt->buf, SIZEOF(rt->buf));
                 if (len > SIZEOF(rt->buf)) {
-                    char *ptr = alloc(rt->arena, len, 1);
-                    len = value_convert_to_str(v, ptr, len);
-                    str = (String) { ptr, len };
-                } else
+                    char *p = alloc(rt->arena, len, 1);
+                    if (p == NULL) {
+                        REPORT(&rt->err, "Out of memory");
+                        rt->state = RUNTIME_ERROR;
+                        return (WL_EvalResult) { .type=WL_EVAL_ERROR };
+                    }
+                    len = value_convert_to_str(v, p, len);
+                    str = (String) { p, len };
+                } else {
                     str = (String) { rt->buf, len };
+                }
             }
 
             rt->cur_output++;
@@ -5530,4 +5613,25 @@ void wl_append(WL_Runtime *rt)
         rt->state = RUNTIME_ERROR;
         return;
     }
+}
+
+void wl_runtime_dump(WL_Runtime *rt)
+{
+    for (int i = 0; i < rt->num_frames; i++) {
+        printf("=== frame %d ===\n", i);
+        
+        Frame *frame = &rt->frames[i];
+
+        int num_vars;
+        if (i+1 < rt->num_frames)
+            num_vars = frame->varbase - rt->frames[i+1].varbase;
+        else
+            num_vars = frame->varbase - rt->vars;
+
+        for (int j = 0; j < num_vars; j++) {
+            printf("  %d = ", j);
+            value_print(rt->values[frame->varbase - j]);
+        }
+    }
+    printf("===============\n");
 }

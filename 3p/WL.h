@@ -49,11 +49,12 @@ WL_AddResult  wl_compiler_add   (WL_Compiler *compiler, WL_String content);
 int           wl_compiler_link  (WL_Compiler *compiler, WL_Program *program);
 WL_String     wl_compiler_error (WL_Compiler *compiler);
 int           wl_dump_ast       (WL_Compiler *compiler, char *dst, int cap);
-int           wl_dump_program   (WL_Program program, char *dst, int cap);
+void          wl_dump_program   (WL_Program program);
 
 WL_Runtime*   wl_runtime_init   (WL_Arena *arena, WL_Program program);
 WL_EvalResult wl_runtime_eval   (WL_Runtime *rt);
 WL_String     wl_runtime_error  (WL_Runtime *rt);
+void          wl_runtime_dump   (WL_Runtime *rt);
 
 bool wl_streq      (WL_String a, char *b, int blen);
 int  wl_arg_count  (WL_Runtime *rt);

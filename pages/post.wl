@@ -1,51 +1,242 @@
 include "pages/page.wl"
 
-let posts = $query("SELECT title, content FROM Posts WHERE id=?", $post_id)
-let comments = $query("SELECT C.id, U.username, C.content FROM Comments as C, Users as U WHERE C.parent_post=? AND U.id == C.author", $post_id)
+let posts = $query("SELECT U.username, P.title, P.content FROM Posts as P, Users as U WHERE P.id=? AND U.id=P.author", $post_id)
+let comments = $query("SELECT C.id, U.username, C.content, C.parent_post, C.parent_comment FROM Comments as C, Users as U WHERE C.parent_post=? AND U.id=C.author", $post_id)
+
+let lookup = {}
+
+for comment in comments: {
+    comment.child = []
+    lookup[comment.id] = comment
+}
+
+let root_comments = []
+
+for comment in comments: {
+    if comment.parent_comment == none:
+        root_comments << comment
+    else
+        lookup[comment.parent_comment].child << comment
+}
 
 let post = posts[0]
 
 let style =
     <style>
-    .child {
-        border-left: 3px solid #ccc;
+    .thread-header {
+        padding: 15px 0;
+        border-bottom: 2px solid #E8D4A9;
+        margin-bottom: 20px;
+    }
+    .thread-title {
+        font-size: 16px;
+        font-weight: bold;
+        margin-bottom: 8px;
+    }
+    .thread-title a {
+        color: #1D2B42;
+        text-decoration: none;
+    }
+    .thread-title a:hover {
+        text-decoration: underline;
+    }
+    .thread-meta {
+        font-size: 12px;
+        color: #7A5F2A;
+        margin-bottom: 10px;
+    }
+    .thread-meta a {
+        color: #7A5F2A;
+    }
+    .thread-text {
+        font-size: 14px;
+        color: #1D2B42;
+        line-height: 160%;
+        margin-bottom: 10px;
+    }
+    .thread-actions {
+        font-size: 12px;
+    }
+    .thread-actions a {
+        color: #7A5F2A;
+        margin-right: 10px;
+    }
+    
+    /* Comment styles */
+    .comment {
+        margin-bottom: 15px;
+        border-left: 1px solid #E8D4A9;
         padding-left: 10px;
     }
-    form textarea {
+    
+    .comment-meta {
+        font-size: 11px;
+        color: #7A5F2A;
+        margin-bottom: 5px;
+    }
+    .comment-meta a {
+        color: #7A5F2A;
+    }
+    .comment-text {
+        font-size: 13px;
+        color: #1D2B42;
+        line-height: 150%;
+        margin-bottom: 5px;
+    }
+    .comment-actions {
+        font-size: 11px;
+    }
+    .comment-actions a {
+        color: #7A5F2A;
+        margin-right: 8px;
+    }
+    .comment-actions a:hover {
+        color: #1D2B42;
+    }
+    
+    .vote-buttons {
+        float: left;
+        width: 15px;
+        margin-right: 8px;
+        font-size: 10px;
+        text-align: center;
+    }
+    .vote-buttons a {
+        display: block;
+        color: #7A5F2A;
+        text-decoration: none;
+        line-height: 100%;
+    }
+    .vote-buttons a:hover {
+        color: #1D2B42;
+    }
+    .comment-content {
+        margin-left: 23px;
+    }
+    .comment-child {
+        margin-top: 10px;
+        margin-left: 10px;
+    }
+    .add-comment {
+        margin: 20px 0;
+        padding: 15px;
+        background: #E8D4A9;
+        border-radius: 3px;
+        border: 1px solid #D4C298;
+    }
+    .add-comment form {
+        margin: 0;
+    }
+    .add-comment form textarea {
         width: 100%;
+        height: 80px;
+        font-family: monospace;
+        font-size: 12px;
+        background: #F7E6C0;
+        border: 1px solid #D4C298;
+        border-radius: 3px;
+        padding: 8px;
+        box-sizing: border-box;
+        resize: vertical;
+    }
+    .add-comment form input[type=submit] {
+        background: #5780C9;
+        color: #F7E6C0;
+        border: none;
+        border-radius: 3px;
+        padding: 6px 12px;
+        font-family: monospace;
+        font-size: 12px;
+        cursor: pointer;
+        margin-top: 8px;
+    }
+    .add-comment input[type=submit]:hover {
+        background: #1D2B42;
+    }
+    summary {
+        list-style: none;
+        text-decoration: underline;
+        color: #7A5F2A;
+        cursor: pointer;
+    }
+    ::-webkit-details-marker {
+        display: none;
+    }
+    
+    .collapsed {
+        color: #7A5F2A;
+        font-size: 11px;
+        cursor: pointer;
+    }
+    .collapsed:hover {
+        color: #1D2B42;
     }
     </style>
 
 let main =
     <main>
-        <h3>\post.title</h3>
-        <p>\post.content</p>
-        <div>
-            \if $login_user_id != none:
-                <form action="/api/comment" method="POST">
-                    <input type="hidden" name="parent_post" value=\'"'\$post_id\'"' />
-                    <textarea name="content"></textarea>
-                    <input type="submit" vaue="Publish" />
-                </form>
+        <div class="thread-header">
+            <div class="thread-title">
+                <span>\post.title</span>
+            </div>
+            <div class="thread-meta">
+                submitted 3 hours ago by <a href="">\post.username</a> | <a href="">\len comments</a>
+            </div>
+            <div class="thread-text">
+                \post.content
+            </div>
+            <details>
+                <summary>
+                    reply
+                </summary>
+                <div class="add-comment">
+                    <form action="/api/comment" method="POST">
+                        <input type="hidden" name="parent_post" value=\'"'\$post_id\'"' />
+                        <textarea name="content" placeholder="Add a comment..."></textarea>
+                        <input type="submit" vaue="Publish" />
+                    </form>
+                </div>
+            </details>
         </div>
-        \if len comments == 0:
-            <span>No comments yet!</span>
-        else for comment in comments:
-            <div>
-                <a href="">\comment.username</a>
-                <p>
-                    \comment.content
-                </p>
-                <div class="child">
+
+        \procedure render_comment(comment)
+            <div class="comment">
+                <div class="vote-buttons">
+                    <a href="">▲</a>
+                    <a href="">▼</a>
+                </div>
+                <div class="comment-content">
+                    <div class="comment-meta">
+                        <a href="">\comment.username</a> 2 hours ago
+                    </div>
+                    <div class="comment-text">
+                        \comment.content
+                    </div>
                     \if $login_user_id != none:
-                        <form action="/api/comment" method="POST">
-                            <input type="hidden" name="parent_post"    value=\'"'\$post_id\'"' />
-                            <input type="hidden" name="parent_comment" value=\'"'\comment.id\'"' />
-                            <textarea name="content"></textarea>
-                            <input type="submit" vaue="Publish" />
-                        </form>
+                        <details>
+                            <summary>
+                                reply
+                            </summary>
+                            <div class="add-comment">
+                                <form action="/api/comment" method="POST">
+                                    <input type="hidden" name="parent_post"    value=\'"'\$post_id\'"' />
+                                    <input type="hidden" name="parent_comment" value=\'"'\comment.id\'"' />
+                                    <textarea name="content" placeholder="Add a comment..."></textarea>
+                                    <input type="submit" vaue="Publish" />
+                                </form>
+                            </div>
+                        </details>
+                </div>
+                <div class="comment-child">
+                \for child in comment.child:
+                    render_comment(child)
                 </div>
             </div>
+
+        \if len root_comments == 0:
+            <span>(No comments)</span>
+        else for comment in root_comments:
+            render_comment(comment)
     </main>
 
 page(post.title, $login_user_id, style, main)
