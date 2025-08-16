@@ -43,15 +43,16 @@ procedure page(title, login_user_id, style, main)
             }
         </style>
         \(style)
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/1.9.2/htmx.min.js"></script>
     </head>
     <body>
         <nav>
             <div>
                 <a href="/index">index</a>
-            \if login_user_id != none: {
-                "|\n"
-                <a href="/write">write</a>
-            }
+                \if login_user_id != none: {
+                    "|\n"
+                    <a href="/write">write</a>
+                }
             </div>
             \if login_user_id == none:
                 <div>

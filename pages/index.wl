@@ -1,6 +1,6 @@
 include "pages/page.wl"
 
-let posts = $query("SELECT id, title, is_link, content, 0 as num_comments, CURRENT_TIMESTAMP as date FROM Posts")
+let posts = $query("SELECT P.id, P.title, P.is_link, P.content, (SELECT COUNT(*) FROM Comments as C WHERE c.parent_post=P.id) as num_comments, CURRENT_TIMESTAMP as date FROM Posts as P")
 
 if posts == none:
     posts = []
@@ -30,13 +30,20 @@ let style =
             width: 250px;
             text-align: right;
         }
+
+        #no-posts {
+            margin: 60px auto;
+            width: 100%;
+            text-align: center;
+            color: #7A5F2A;
+        }
     </style>
 
 let main =
     <main>
 
         \if len(posts) == 0:
-            <div>There are no posts yet!</div>
+            <div id="no-posts">There are no posts yet!</div>
 
         \for post in posts: {
 
@@ -51,7 +58,7 @@ let main =
                     <a href=\'"'\link\'"'>\post.title</a>
                 </div>
                 <div>
-                    <span>\post.date</span> | <span><a href=\'"'\link\'"'>\post.num_comments comments</a></span>
+                    <span>\post.date</span> | <span>\post.num_comments comments</span>
                 </div>
             </div>
         }

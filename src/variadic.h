@@ -1,3 +1,6 @@
+#ifndef VARIADIC_INCLUDED
+#define VARIADIC_INCLUDED
+
 #include <stdbool.h>
 #include "chttp.h"
 
@@ -103,3 +106,5 @@ typedef struct {
 
 #define DISPATCH__(_1, _2, _3, _4, _5, NAME, ...) NAME
 #define VARGS(...) DISPATCH__(__VA_ARGS__, VARGS_5, VARGS_4, VARGS_3, VARGS_2, VARGS_1)(__VA_ARGS__)
+
+#endif // VARIADIC_INCLUDED

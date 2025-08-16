@@ -59,4 +59,16 @@ let style =
         .form-links a:hover {
             color: #1D2B42;
         }
+
+        #response {
+            max-width: 300px;
+            margin: auto;
+        }
+        #response .error {
+            margin-top: 30px;
+            border-radius: 3px;
+            border: 1px solid #E44C82;
+            background: #F295B5;
+            padding: 5px 10px;
+        }
     </style>

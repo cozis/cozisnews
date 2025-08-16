@@ -118,21 +118,17 @@ let style =
         margin-left: 10px;
     }
     .add-comment {
-        margin: 20px 0;
-        padding: 15px;
-        background: #E8D4A9;
-        border-radius: 3px;
-        border: 1px solid #D4C298;
     }
     .add-comment form {
         margin: 0;
+        overflow: auto;
     }
     .add-comment form textarea {
         width: 100%;
         height: 80px;
         font-family: monospace;
         font-size: 12px;
-        background: #F7E6C0;
+        background: white;
         border: 1px solid #D4C298;
         border-radius: 3px;
         padding: 8px;
@@ -141,7 +137,7 @@ let style =
     }
     .add-comment form input[type=submit] {
         background: #5780C9;
-        color: #F7E6C0;
+        color: white;
         border: none;
         border-radius: 3px;
         padding: 6px 12px;
@@ -149,6 +145,7 @@ let style =
         font-size: 12px;
         cursor: pointer;
         margin-top: 8px;
+        float: right;
     }
     .add-comment input[type=submit]:hover {
         background: #1D2B42;
@@ -162,14 +159,19 @@ let style =
     ::-webkit-details-marker {
         display: none;
     }
-    
-    .collapsed {
+
+    #no-comments {
+        margin: 30px 0;
+        width: 100%;
+        text-align: center;
         color: #7A5F2A;
-        font-size: 11px;
-        cursor: pointer;
     }
-    .collapsed:hover {
-        color: #1D2B42;
+    pre {
+        white-space: pre-wrap;       /* Since CSS 2.1 */
+        white-space: -moz-pre-wrap;  /* Mozilla, since 1999 */
+        white-space: -pre-wrap;      /* Opera 4-6 */
+        white-space: -o-pre-wrap;    /* Opera 7 */
+        word-wrap: break-word;       /* Internet Explorer 5.5+ */
     }
     </style>
 
@@ -183,7 +185,7 @@ let main =
                 submitted 3 hours ago by <a href="">\post.username</a> | <a href="">\len comments</a>
             </div>
             <div class="thread-text">
-                \post.content
+                <pre>\post.content</pre>
             </div>
             <details>
                 <summary>
@@ -210,7 +212,7 @@ let main =
                         <a href="">\comment.username</a> 2 hours ago
                     </div>
                     <div class="comment-text">
-                        \comment.content
+                        <pre>\comment.content</pre>
                     </div>
                     \if $login_user_id != none:
                         <details>
@@ -234,7 +236,9 @@ let main =
             </div>
 
         \if len root_comments == 0:
-            <span>(No comments)</span>
+            <div id="no-comments">
+                No comments
+            </div>
         else for comment in root_comments:
             render_comment(comment)
     </main>

@@ -2684,9 +2684,6 @@ static void walk_expr_node(Codegen *cg, Node *node, bool one)
 
         case NODE_OPER_SHOVEL:
         {
-            Node *dst = node->left;
-            Node *src = node->right;
-
             walk_expr_node(cg, node->left, true);
 
             cg_push_scope(cg, SCOPE_ASSIGNMENT);

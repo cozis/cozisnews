@@ -4,7 +4,10 @@ include "pages/login_and_signup_style.wl"
 let main =
     <main>
         <span>Welcome back!</span>
-        <form action="/api/login" method="POST">
+
+        <div id="response"></div>
+
+        <form hx-post="/api/login" hx-target="#response">
             <input type="text"     name="username" placeholder="username" />
             <input type="password" name="password" placeholder="password" />
             <input type="submit"   value="Log-In" />

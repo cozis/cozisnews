@@ -6,10 +6,24 @@
 #include <stdbool.h>
 #include "sqlite3.h"
 #include "chttp.h"
-#include "wl.h"
 #include "sqlite3utils.h"
+#include "template.h"
 
-sqlite3 *db;
+#define WL_STR(X) ((WL_String) { (X), (int) sizeof(X)-1})
+
+#define HTML_STR(X) html_str(HTTP_STR(#X))
+
+static HTTP_String html_str(HTTP_String str)
+{
+    str = http_trim(str);
+    if (str.len > 0 && str.ptr[0] == '(') {
+        str.ptr++;
+        str.len--;
+    }
+    if (str.len > 0 && str.ptr[str.len-1] == ')')
+        str.len--;
+    return str;
+}
 
 int load_file(char *file, char **data, long *size)
 {
@@ -29,309 +43,64 @@ int load_file(char *file, char **data, long *size)
     return 0;
 }
 
-static int query_routine(WL_Runtime *rt)
-{
-    int num_args = wl_arg_count(rt);
-    if (num_args == 0)
-        return 0;
-
-    WL_String format;
-    if (!wl_arg_str(rt, 0, &format))
-        return -1;
-
-    sqlite3_stmt *stmt;
-    int ret = sqlite3_prepare_v2(db, format.ptr, format.len, &stmt, 0);
-    if (ret != SQLITE_OK) {
-        fprintf(stderr, "Failed to prepare statement: %s\n", sqlite3_errmsg(db));
-        return -1;
-    }
-
-    for (int i = 1; i < num_args; i++) {
-
-        int64_t ival;
-        double  fval;
-        WL_String str;
-
-        if (0) {}
-        else if (wl_arg_none(rt, i))
-            ret = sqlite3_bind_null  (stmt, i);
-        else if (wl_arg_s64(rt, i, &ival))
-            ret = sqlite3_bind_int64 (stmt, i, ival);
-        else if (wl_arg_f64(rt, i, &fval))
-            ret = sqlite3_bind_double(stmt, i, fval);
-        else if (wl_arg_str(rt, i, &str))
-            ret = sqlite3_bind_text  (stmt, i, str.ptr, str.len, NULL);
-        else assert(0);
-
-        if (ret != SQLITE_OK) {
-            fprintf(stderr, "Failed to prepare statement: %s\n", sqlite3_errmsg(db));
-            sqlite3_finalize(stmt);
-            return -1;
-        }
-    }
-
-    wl_push_array(rt, 0);
-
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
-
-        int num_cols = sqlite3_column_count(stmt);
-        if (num_cols < 0) {
-            assert(0); // TODO
-        }
-
-        wl_push_map(rt, num_cols);
-
-        for (int i = 0; i < num_cols; i++) {
-            ret = sqlite3_column_type(stmt, i);
-            switch (ret) {
-
-                case SQLITE_INTEGER:
-                {
-                    int64_t x = sqlite3_column_int64(stmt, i);
-                    wl_push_s64(rt, x);
-                }
-                break;
-
-                case SQLITE_FLOAT:
-                {
-                    double x = sqlite3_column_double(stmt, i);
-                    wl_push_f64(rt, x);
-                }
-                break;
-
-                case SQLITE_TEXT:
-                {
-                    const void *x = sqlite3_column_text(stmt, i);
-                    int n = sqlite3_column_bytes(stmt, i);
-                    wl_push_str(rt, (WL_String) { (char*) x, n });
-                }
-                break;
-
-                case SQLITE_BLOB:
-                {
-                    const void *x = sqlite3_column_blob(stmt, i);
-                    int n = sqlite3_column_bytes(stmt, i);
-                    wl_push_str(rt, (WL_String) { (char*) x, n });
-                }
-                break;
-
-                case SQLITE_NULL:
-                {
-                    wl_push_none(rt);
-                }
-                break;
-            }
-
-            const char *name = sqlite3_column_name(stmt, i);
-
-            wl_push_str(rt, (WL_String) { (char*) name, strlen(name) });
-            wl_insert(rt);
-        }
-
-        wl_append(rt);
-    }
-
-    sqlite3_finalize(stmt);
-    return 0;
-}
-
-int evaluate_template(HTTP_ResponseBuilder builder,
-    WL_Program program, WL_Arena arena, int user_id, int post_id)
-{
-    //wl_dump_program(program);
-
-    WL_Runtime *rt = wl_runtime_init(&arena, program);
-    if (rt == NULL)
-        return -1;
-
-    for (;;) {
-
-        WL_EvalResult result = wl_runtime_eval(rt);
-        switch (result.type) {
-
-            case WL_EVAL_DONE:
-            return 0;
-
-            case WL_EVAL_ERROR:
-            printf("Error: %s\n", wl_runtime_error(rt).ptr); // TODO
-            return -1;
-
-            case WL_EVAL_SYSVAR:
-            if (wl_streq(result.str, "login_user_id", -1)) {
-
-                if (user_id < 0)
-                    wl_push_none(rt);
-                else
-                    wl_push_s64(rt, user_id);
-
-            } else if (wl_streq(result.str, "post_id", -1)) {
-
-                if (post_id < 0)
-                    wl_push_none(rt);
-                else
-                    wl_push_s64(rt, post_id);
-            }
-            break;
-
-            case WL_EVAL_SYSCALL:
-            if (wl_streq(result.str, "query", -1)) {
-                query_routine(rt);
-                break;
-            }
-            break;
-
-            case WL_EVAL_OUTPUT:
-            http_response_builder_body(builder, (HTTP_String) { result.str.ptr, result.str.len });
-            break;
-        }
-    }
-
-    return 0;
-}
-
-void evaluate_template_2(HTTP_ResponseBuilder builder, WL_Arena arena, char *file, int user_id, int post_id)
-{
-    http_response_builder_status(builder, 200);
-    http_response_builder_header(builder, HTTP_STR("Content-Type: text/html"));
-
-    WL_Compiler *compiler = wl_compiler_init(&arena);
-    if (compiler == NULL) {
-        assert(0); // TODO
-    }
-
-    char *loaded_files[128];
-    int num_loaded_files = 0;
-
-    WL_AddResult result;
-    WL_String path = { file, strlen(file) };
-    for (int i = 0;; i++) {
-
-        char buf[1<<10];
-        if (path.len >= (int) sizeof(buf)) {
-            assert(0); // TODO
-        }
-        memcpy(buf, path.ptr, path.len);
-        buf[path.len] = '\0';
-
-        FILE *f = fopen(buf, "rb");
-        if (f == NULL) {
-            http_response_builder_undo(builder);
-            http_response_builder_status(builder, 500);
-            http_response_builder_body(builder, HTTP_STR("Couldn't find file '"));
-            http_response_builder_body(builder, (HTTP_String) { path.ptr, path.len });
-            http_response_builder_body(builder, HTTP_STR("'"));
-            http_response_builder_done(builder);
-            return;
-        }
-
-        fseek(f, 0, SEEK_END);
-        long file_size = ftell(f);
-        fseek(f, 0, SEEK_SET);
-
-        char *file_data = malloc(file_size);
-
-        fread(file_data, 1, file_size, f);
-        fclose(f);
-
-        result = wl_compiler_add(compiler, (WL_String) { file_data, file_size });
-
-        loaded_files[num_loaded_files++] = file_data;
-
-        if (result.type == WL_ADD_ERROR) {
-            printf("Compilation of '%.*s' failed\n", path.len, path.ptr);
-            break;
-        }
-
-        if (result.type == WL_ADD_LINK)
-            break;
-
-        assert(result.type == WL_ADD_AGAIN);
-        path = result.path;
-    }
-
-    WL_Program program;
-    int ret = wl_compiler_link(compiler, &program);
-
-    for (int i = 0; i < num_loaded_files; i++)
-        free(loaded_files[i]);
-
-    if (ret < 0) {
-        WL_String err = wl_compiler_error(compiler);
-        http_response_builder_undo(builder);
-        http_response_builder_status(builder, 500);
-        http_response_builder_body(builder, (HTTP_String) { err.ptr, err.len });
-        http_response_builder_done(builder);
-        return;
-    }
-
-    if (evaluate_template(builder, program, arena, user_id, post_id) < 0) {
-        http_response_builder_undo(builder);
-        http_response_builder_status(builder, 500);
-        http_response_builder_done(builder);
-        return;
-    }
-
-    http_response_builder_done(builder);
-}
-
-int create_user(HTTP_String name, HTTP_String email, HTTP_String pass)
+int create_user(SQLiteCache *dbcache, HTTP_String name, HTTP_String email, HTTP_String pass)
 {
     sqlite3_stmt *stmt;
-    int ret = sqlite3utils_prepare(db, &stmt,
+    int ret = sqlite3utils_prepare_and_bind(dbcache, &stmt,
         "INSERT INTO Users(username, email, password) VALUES (?, ?, ?)", name, email, pass);
     if (ret != SQLITE_OK)
         return -500;
 
     ret = sqlite3_step(stmt);
     if (ret != SQLITE_DONE) {
-        fprintf(stderr, "Failed to prepare statement: %s\n", sqlite3_errmsg(db));
+        fprintf(stderr, "Failed to prepare statement: %s\n", sqlite3_errmsg(sqlite_cache_getdb(dbcache)));
         // TODO: What if the user exists?
-        sqlite3_finalize(stmt);
+        sqlite3_reset(stmt);
         return -500;
     }
 
-    int64_t tmp = sqlite3_last_insert_rowid(db);
+    int64_t tmp = sqlite3_last_insert_rowid(sqlite_cache_getdb(dbcache));
     if (tmp < 0 || tmp > INT_MAX) {
-        sqlite3_finalize(stmt);
+        sqlite3_reset(stmt);
         return -500;
     }
     int user_id = (int) tmp;
 
-    ret = sqlite3_finalize(stmt);
+    ret = sqlite3_reset(stmt);
     if (ret != SQLITE_OK) {
-        fprintf(stderr, "Failed to prepare statement: %s\n", sqlite3_errmsg(db));
-        sqlite3_finalize(stmt);
+        fprintf(stderr, "Failed to prepare statement: %s\n", sqlite3_errmsg(sqlite_cache_getdb(dbcache)));
+        sqlite3_reset(stmt);
         return -500;
     }
 
     return user_id;
 }
 
-int user_exists(HTTP_String name, HTTP_String pass)
+int user_exists(SQLiteCache *dbcache, HTTP_String name, HTTP_String pass)
 {
     sqlite3_stmt *stmt;
-    int ret = sqlite3utils_prepare(db, &stmt,
+    int ret = sqlite3utils_prepare_and_bind(dbcache, &stmt,
         "SELECT id FROM Users WHERE username=? AND password=?", name, pass);
     if (ret != SQLITE_OK)
         return -500;
 
     ret = sqlite3_step(stmt);
     if (ret == SQLITE_DONE) {
-        sqlite3_finalize(stmt);
+        sqlite3_reset(stmt);
         return -404;
     }
     if (ret != SQLITE_ROW) {
-        sqlite3_finalize(stmt);
+        sqlite3_reset(stmt);
         return -500;
     }
 
     int user_id = sqlite3_column_int(stmt, 0);
     if (user_id < 0) {
-        sqlite3_finalize(stmt);
+        sqlite3_reset(stmt);
         return -500;
     }
 
-    ret = sqlite3_finalize(stmt);
+    ret = sqlite3_reset(stmt);
     if (ret != SQLITE_OK)
         return -500;
 
@@ -386,7 +155,7 @@ HTTP_String http_getcookie(HTTP_Request *req, HTTP_String name)
     return HTTP_STR("");
 }
 
-void *alloc(WL_Arena *arena, int num, int align)
+static void *alloc(WL_Arena *arena, int num, int align)
 {
     int pad = -(uintptr_t) (arena->ptr + arena->cur) & (align-1);
     if (arena->len - arena->cur < num + pad)
@@ -493,6 +262,28 @@ HTTP_String http_getparam(HTTP_String body, HTTP_String str, WL_Arena *arena)
     return HTTP_STR("");
 }
 
+static bool is_digit(char c)
+{
+    return c >= '0' && c <= '9';
+}
+
+int http_getparami(HTTP_String body, HTTP_String str, WL_Arena *arena)
+{
+    HTTP_String out = http_getparam(body, str, arena);
+    if (out.len == 0 || !is_digit(out.ptr[0]))
+        return -1;
+    int cur = 0;
+    int buf = 0;
+    do {
+        int d = out.ptr[cur++] - '0';
+        if (buf > (INT_MAX - d) / 10)
+            return -1;
+        buf = buf * 10 + d;
+    } while (cur < out.len && is_digit(out.ptr[cur]));
+
+    return buf;
+}
+
 #define SESSION_LIMIT 1024
 #define USERNAME_LIMIT 64
 
@@ -593,6 +384,7 @@ int main(void)
 
     printf("%s\n", sqlite3_libversion()); 
 
+    sqlite3 *db;
     int ret = sqlite3_open(":memory:", &db);
     if (ret != SQLITE_OK) {
         fprintf(stderr, "Cannot open database: %s\n", sqlite3_errmsg(db));
@@ -616,6 +408,10 @@ int main(void)
     }
 
     free(schema_data);
+
+    TemplateCache *tpcache = template_cache_init(4);
+    SQLiteCache   *dbcache = sqlite_cache_init(db, 5);
+
 
     HTTP_String addr = HTTP_STR("127.0.0.1");
     uint16_t    port = 8080;
@@ -667,15 +463,25 @@ int main(void)
         if (http_streq(path, HTTP_STR("/api/login"))) {
 
             if (req->method != HTTP_METHOD_POST) {
-                http_response_builder_status(builder, 405);
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Invalid request method
+                    </div>
+                )));
                 http_response_builder_done(builder);
                 continue;
             }
 
             if (user_id != -1) {
                 // Already logged in
-                http_response_builder_status(builder, 303);
-                http_response_builder_header(builder, HTTP_STR("Location: /index"));
+                http_response_builder_status(builder, 200);
+                http_response_builder_header(builder, HTTP_STR("HX-Redirect: /index"));
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        You are already logged in
+                    </div>
+                )));
                 http_response_builder_done(builder);
                 continue;
             }
@@ -687,14 +493,24 @@ int main(void)
             pass = http_trim(pass);
 
             if (!valid_name(name) || !valid_pass(pass)) {
-                http_response_builder_status(builder, 400);
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Invalid credentials
+                    </div>
+                )));
                 http_response_builder_done(builder);
                 continue;
             }
 
-            int ret = user_exists(name, pass);
+            int ret = user_exists(dbcache, name, pass);
             if (ret < 0) {
-                http_response_builder_status(builder, -ret);
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Invalid credentials
+                    </div>
+                )));
                 http_response_builder_done(builder);
                 continue;
             }
@@ -702,7 +518,12 @@ int main(void)
 
             int sess_id = session_set_add(&sessions, user_id);
             if (sess_id < 0) {
-                http_response_builder_status(builder, 500);
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Internal error
+                    </div>
+                )));
                 http_response_builder_done(builder);
                 continue;
             }
@@ -710,28 +531,48 @@ int main(void)
             char cookie[1<<9];
             int cookie_len = snprintf(cookie, sizeof(cookie), "Set-Cookie: sess_id=%d; Path=/; HttpOnly", sess_id);
             if (cookie_len < 0 || cookie_len >= (int) sizeof(cookie)) {
-                http_response_builder_status(builder, 500);
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Internal error
+                    </div>
+                )));
                 http_response_builder_done(builder);
                 continue;
             }
 
-            http_response_builder_status(builder, 303); // TODO: Whats the correct code here?
+            http_response_builder_status(builder, 200); // TODO: Whats the correct code here?
             http_response_builder_header(builder, (HTTP_String) { cookie, cookie_len });
-            http_response_builder_header(builder, HTTP_STR("Location: /index"));
+            http_response_builder_header(builder, HTTP_STR("HX-Redirect: /index"));
+            http_response_builder_body(builder, HTML_STR((
+                <div class="success">
+                    Welcome back!
+                </div>
+            )));
             http_response_builder_done(builder);
 
         } else if (http_streq(path, HTTP_STR("/api/signup"))) {
 
             if (req->method != HTTP_METHOD_POST) {
-                http_response_builder_status(builder, 405);
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Invalid request method
+                    </div>
+                )));
                 http_response_builder_done(builder);
                 continue;
             }
 
             if (user_id != -1) {
                 // Already logged in
-                http_response_builder_status(builder, 303);
-                http_response_builder_header(builder, HTTP_STR("Location: /index"));
+                http_response_builder_status(builder, 200);
+                http_response_builder_header(builder, HTTP_STR("HX-Redirect: /index"));
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        You are already logged in
+                    </div>
+                )));
                 http_response_builder_done(builder);
                 continue;
             }
@@ -742,20 +583,35 @@ int main(void)
             HTTP_String pass2 = http_getparam(req->body, HTTP_STR("password2"), &arena);
 
             if (!valid_name(name) || !valid_email(email) || !valid_pass(pass1)) {
-                http_response_builder_status(builder, 400);
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Invalid credentials
+                    </div>
+                )));
                 http_response_builder_done(builder);
                 continue;
             }
 
             if (!http_streq(pass1, pass2)) {
-                http_response_builder_status(builder, 400);
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        The password was repeated incorrectly
+                    </div>
+                )));
                 http_response_builder_done(builder);
                 continue;
             }
 
-            int ret = create_user(name, email, pass1);
+            int ret = create_user(dbcache, name, email, pass1);
             if (ret < 0) {
-                http_response_builder_status(builder, -ret);
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Internal error
+                    </div>
+                )));
                 http_response_builder_done(builder);
                 continue;
             }
@@ -763,7 +619,12 @@ int main(void)
 
             int sess_id = session_set_add(&sessions, user_id);
             if (sess_id < 0) {
-                http_response_builder_status(builder, 500);
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Internal error
+                    </div>
+                )));
                 http_response_builder_done(builder);
                 continue;
             }
@@ -771,14 +632,24 @@ int main(void)
             char cookie[1<<9];
             int cookie_len = snprintf(cookie, sizeof(cookie), "Set-Cookie: sess_id=%d; Path=/; HttpOnly", sess_id);
             if (cookie_len < 0 || cookie_len >= (int) sizeof(cookie)) {
-                http_response_builder_status(builder, 500);
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Internal error
+                    </div>
+                )));
                 http_response_builder_done(builder);
                 continue;
             }
 
-            http_response_builder_status(builder, 303); // TODO: Whats the correct code here?
+            http_response_builder_status(builder, 200); // TODO: Whats the correct code here?
             http_response_builder_header(builder, (HTTP_String) { cookie, cookie_len });
-            http_response_builder_header(builder, HTTP_STR("Location: /index"));
+            http_response_builder_header(builder, HTTP_STR("HX-Redirect: /index"));
+            http_response_builder_body(builder, HTML_STR((
+                <div class="success">
+                    Welcome!
+                </div>
+            )));
             http_response_builder_done(builder);
 
         } else if (http_streq(path, HTTP_STR("/api/logout"))) {
@@ -814,12 +685,37 @@ int main(void)
             link    = http_trim(link);
             content = http_trim(content);
 
-            if (!valid_post_title(title) || !valid_link(link) || !valid_post_content(content)) {
-                assert(0); // TODO
+            if (!valid_post_title(title)) {
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Invalid title
+                    </div>
+                )));
+                http_response_builder_done(builder);
+                continue;
             }
 
-            if (content.len == 0 && link.len == 0) {
-                assert(0); // TODO
+            if (!valid_link(link)) {
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Invalid link
+                    </div>
+                )));
+                http_response_builder_done(builder);
+                continue;
+            }
+
+            if (!valid_post_content(content)) {
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Invalid content
+                    </div>
+                )));
+                http_response_builder_done(builder);
+                continue;
             }
 
             bool is_link = false;
@@ -829,31 +725,68 @@ int main(void)
             }
 
             sqlite3_stmt *stmt;
-            int ret = sqlite3utils_prepare(db, &stmt, "INSERT INTO Posts(author, title, is_link, content) VALUES (?, ?, ?, ?)", user_id, title, is_link, content);
+            int ret = sqlite3utils_prepare_and_bind(dbcache, &stmt, "INSERT INTO Posts(author, title, is_link, content) VALUES (?, ?, ?, ?)", user_id, title, is_link, content);
             if (ret != SQLITE_OK) {
-                assert(0); // TODO
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Internal error
+                    </div>
+                )));
+                http_response_builder_done(builder);
+                continue;
             }
 
             ret = sqlite3_step(stmt);
             if (ret != SQLITE_DONE) {
-                assert(0); // TODO
-            }
-
-            ret = sqlite3_finalize(stmt);
-            if (ret != SQLITE_OK) {
-                assert(0); // TODO
+                sqlite3_reset(stmt);
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Internal error
+                    </div>
+                )));
+                http_response_builder_done(builder);
+                continue;
             }
 
             int64_t tmp = sqlite3_last_insert_rowid(db);
             if (tmp < 0 || tmp > INT_MAX) {
-                assert(0); // TODO
+                sqlite3_reset(stmt);
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Internal error
+                    </div>
+                )));
+                http_response_builder_done(builder);
+                continue;
             }
             int post_id = (int) tmp;
+
+            ret = sqlite3_reset(stmt);
+            if (ret != SQLITE_OK) {
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Internal error
+                    </div>
+                )));
+                http_response_builder_done(builder);
+                continue;
+            }
 
             char location[1<<9];
             ret = snprintf(location, sizeof(location), "Location: /post?id=%d", post_id);
             if (ret < 0 || ret >= (int) sizeof(location)) {
-                assert(0); // TODO
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Internal error
+                    </div>
+                )));
+                http_response_builder_done(builder);
+                continue;
             }
 
             http_response_builder_status(builder, 303);
@@ -863,85 +796,96 @@ int main(void)
         } else if (http_streq(path, HTTP_STR("/api/comment"))) {
 
             if (req->method != HTTP_METHOD_POST) {
-                http_response_builder_status(builder, 405);
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Invalid request method
+                    </div>
+                )));
                 http_response_builder_done(builder);
                 continue;
             }
 
             if (user_id == -1) {
-                http_response_builder_status(builder, 303);
-                http_response_builder_header(builder, HTTP_STR("Location: /index"));
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        You are not logged in
+                    </div>
+                )));
                 http_response_builder_done(builder);
                 continue;
             }
 
-            HTTP_String parent_post_str = http_getparam(req->body, HTTP_STR("parent_post"), &arena);
-            HTTP_String parent_comment_str = http_getparam(req->body, HTTP_STR("parent_comment"), &arena);
-            HTTP_String content = http_getparam(req->body, HTTP_STR("content"), &arena);
-
-            int parent_post;
-            {
-                char buf[32];
-                if (parent_post_str.len >= (int) sizeof(buf)) {
-                    assert(0); // TODO
-                }
-                memcpy(buf, parent_post_str.ptr, parent_post_str.len);
-                buf[parent_post_str.len] = '\0';
-
-                parent_post = atoi(buf);
-                if (parent_post == 0) {
-                    assert(0); // TODO
-                }
-            }
-
-            int parent_comment;
-            {
-                char buf[32];
-                if (parent_comment_str.len >= (int) sizeof(buf))
-                    parent_comment = -1;
-                else {
-                    memcpy(buf, parent_comment_str.ptr, parent_comment_str.len);
-                    buf[parent_comment_str.len] = '\0';
-
-                    parent_comment = atoi(buf);
-                    if (parent_comment == 0)
-                        parent_comment = -1;
-                }
-            }
+            int         parent_post    = http_getparami(req->body, HTTP_STR("parent_post"),    &arena);
+            int         parent_comment = http_getparami(req->body, HTTP_STR("parent_comment"), &arena);
+            HTTP_String content        = http_getparam (req->body, HTTP_STR("content"),        &arena);
 
             content = http_trim(content);
             if (!valid_comment_content(content)) {
-                assert(0); // TODO
-            }
-
-            if (content.len == 0) {
-                assert(0); // TODO
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Invalid content
+                    </div>
+                )));
+                http_response_builder_done(builder);
+                continue;
             }
 
             int ret;
             sqlite3_stmt *stmt;
             if (parent_comment == -1)
-                ret = sqlite3utils_prepare(db, &stmt, "INSERT INTO Comments(author, content, parent_post) VALUES (?, ?, ?)", user_id, content, parent_post);
+                ret = sqlite3utils_prepare_and_bind(dbcache, &stmt, "INSERT INTO Comments(author, content, parent_post) VALUES (?, ?, ?)", user_id, content, parent_post);
             else
-                ret = sqlite3utils_prepare(db, &stmt, "INSERT INTO Comments(author, content, parent_post, parent_comment) VALUES (?, ?, ?, ?)", user_id, content, parent_post, parent_comment);
+                ret = sqlite3utils_prepare_and_bind(dbcache, &stmt, "INSERT INTO Comments(author, content, parent_post, parent_comment) VALUES (?, ?, ?, ?)", user_id, content, parent_post, parent_comment);
             if (ret != SQLITE_OK) {
-                assert(0); // TODO
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Internal error
+                    </div>
+                )));
+                http_response_builder_done(builder);
+                continue;
             }
 
             ret = sqlite3_step(stmt);
             if (ret != SQLITE_DONE) {
-                assert(0); // TODO
+                sqlite3_reset(stmt);
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Internal error
+                    </div>
+                )));
+                http_response_builder_done(builder);
+                continue;
             }
 
-            ret = sqlite3_finalize(stmt);
+            ret = sqlite3_reset(stmt);
             if (ret != SQLITE_OK) {
-                assert(0); // TODO
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Internal error
+                    </div>
+                )));
+                http_response_builder_done(builder);
+                continue;
             }
 
             char location[1<<9];
             ret = snprintf(location, sizeof(location), "Location: /post?id=%d", parent_post);
             if (ret < 0 || ret >= (int) sizeof(location)) {
-                assert(0); // TODO
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Internal error
+                    </div>
+                )));
+                http_response_builder_done(builder);
+                continue;
             }
 
             http_response_builder_status(builder, 303);
@@ -950,7 +894,7 @@ int main(void)
 
         } else if (http_streq(path, HTTP_STR("/index"))) {
 
-            evaluate_template_2(builder, arena, "pages/index.wl", user_id, -1);
+            template_eval(builder, 200, WL_STR("pages/index.wl"), tpcache, &arena, dbcache, user_id, -1);
 
         } else if (http_streq(path, HTTP_STR("/write"))) {
 
@@ -962,7 +906,7 @@ int main(void)
                 continue;
             }
 
-            evaluate_template_2(builder, arena, "pages/write.wl", user_id, -1);
+            template_eval(builder, 200, WL_STR("pages/write.wl"), tpcache, &arena, dbcache, user_id, -1);
 
         } else if (http_streq(path, HTTP_STR("/login"))) {
 
@@ -974,7 +918,7 @@ int main(void)
                 continue;
             }
 
-            evaluate_template_2(builder, arena, "pages/login.wl", user_id, -1);
+            template_eval(builder, 200, WL_STR("pages/login.wl"), tpcache, &arena, dbcache, user_id, -1);
 
         } else if (http_streq(path, HTTP_STR("/signup"))) {
 
@@ -986,60 +930,61 @@ int main(void)
                 continue;
             }
 
-            evaluate_template_2(builder, arena, "pages/signup.wl", user_id, -1);
+            template_eval(builder, 200, WL_STR("pages/signup.wl"), tpcache, &arena, dbcache, user_id, -1);
 
         } else if (http_streq(path, HTTP_STR("/post"))) {
 
-            HTTP_String idstr = http_getparam(req->url.query, HTTP_STR("id"), &arena);
-
-            char buf[32];
-            if (idstr.len == 0 || idstr.len >= (int) sizeof(buf)) {
-                printf("post id [%.*s] is not defined\n", idstr.len, idstr.ptr); // TODO
-                evaluate_template_2(builder, arena, "pages/notfound.wl", user_id, -1);
-                continue;
-            }
-            memcpy(buf, idstr.ptr, idstr.len);
-            buf[idstr.len] = '\0';
-
-            int post_id = atoi(buf);
-            if (post_id == 0) {
-                printf("Invalid post id [%s]\n", buf);
-                evaluate_template_2(builder, arena, "pages/notfound.wl", user_id, -1);
+            int post_id = http_getparami(req->url.query, HTTP_STR("id"), &arena);
+            if (post_id < 0) {
+                template_eval(builder, 404, WL_STR("pages/notfound.wl"), tpcache, &arena, dbcache, user_id, -1);
                 continue;
             }
 
             sqlite3_stmt *stmt;
-            int ret = sqlite3utils_prepare(db, &stmt, "SELECT COUNT(*) FROM Posts WHERE id=?", post_id);
+            int ret = sqlite3utils_prepare_and_bind(dbcache, &stmt, "SELECT COUNT(*) FROM Posts WHERE id=?", post_id);
             if (ret != SQLITE_OK) {
-                assert(0); // TODO
+                http_response_builder_status(builder, 500);
+                http_response_builder_done(builder);
+                continue;
             }
 
             ret = sqlite3_step(stmt);
             if (ret != SQLITE_ROW) {
-                assert(0); // TODO
+                sqlite3_reset(stmt);
+                http_response_builder_status(builder, 500);
+                http_response_builder_done(builder);
+                continue;
             }
             int64_t num = sqlite3_column_int64(stmt, 0);
 
-            ret = sqlite3_finalize(stmt);
+            ret = sqlite3_reset(stmt);
             if (ret != SQLITE_OK) {
-                assert(0); // TODO
+                http_response_builder_status(builder, 500);
+                http_response_builder_done(builder);
+                continue;
             }
 
             if (num < 0) {
-                assert(0); // TODO
+                http_response_builder_status(builder, 500);
+                http_response_builder_done(builder);
+                continue;
             }
 
-            if (num == 0)
-                evaluate_template_2(builder, arena, "pages/notfound.wl", user_id, -1);
-            else
-                evaluate_template_2(builder, arena, "pages/post.wl", user_id, post_id);
+            if (num == 0) {
+                template_eval(builder, 404, WL_STR("pages/notfound.wl"), tpcache, &arena, dbcache, user_id, -1);
+                continue;
+            }
+
+            template_eval(builder, 200, WL_STR("pages/post.wl"), tpcache, &arena, dbcache, user_id, post_id);
 
         } else {
 
-            evaluate_template_2(builder, arena, "pages/notfound.wl", user_id, -1);
+            template_eval(builder, 404, WL_STR("pages/notfound.wl"), tpcache, &arena, dbcache, user_id, -1);
         }
     }
 
+    sqlite_cache_free(dbcache);
+    template_cache_free(tpcache);
     sqlite3_close(db);
     http_server_free(server);
     http_global_free();
