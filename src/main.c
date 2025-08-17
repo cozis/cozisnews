@@ -113,7 +113,7 @@ int user_exists(SQLiteCache *dbcache, HTTP_String name, HTTP_String pass)
     int rawhashlen = sqlite3_column_bytes(stmt, 1);
 
     PasswordHash hash;
-    if (rawhashlen >= sizeof(hash.data)) {
+    if (rawhashlen >= (int) sizeof(hash.data)) {
         sqlite3_reset(stmt);
         return -500;
     }

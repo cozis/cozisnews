@@ -81,7 +81,7 @@ struct LoadedFile {
     char        data[];
 };
 
-static LoadedFile *load_file(WL_String path, WL_Arena *arena)
+static LoadedFile *load_file(WL_String path)
 {
     char buf[1<<10];
     if (path.len >= (int) sizeof(buf))
@@ -153,7 +153,7 @@ static int compile(WL_String path, WL_Program *program, WL_Arena *arena)
 
     for (int i = 0;; i++) {
 
-        LoadedFile *loaded_file = load_file(path, arena);
+        LoadedFile *loaded_file = load_file(path);
         if (loaded_file == NULL) {
             TRACE("Couldn't load file '%.*s'", path.len, path.ptr);
             free_loaded_files(loaded_file_head);
@@ -295,6 +295,8 @@ static int query_routine(WL_Runtime *rt, SQLiteCache *dbcache)
 
 static void push_sysvar(WL_Runtime *rt, WL_String name, SQLiteCache *dbcache, int user_id, int post_id)
 {
+    (void) dbcache;
+
     if (wl_streq(name, "login_user_id", -1)) {
 
         if (user_id < 0)
@@ -337,7 +339,7 @@ static int get_or_create_program(TemplateCache *cache, WL_String path, WL_Arena 
         memcpy(p, program.ptr, program.len);
         program.ptr = p;
 
-        if (sizeof(cache->pool->path) <= path.len)
+        if ((int) sizeof(cache->pool->path) <= path.len)
             return -1;
         memcpy(cache->pool[i].path, path.ptr, path.len);
         cache->pool[i].path[path.len] = '\0';
@@ -401,6 +403,9 @@ void template_eval(HTTP_ResponseBuilder builder, int status,
 
             case WL_EVAL_OUTPUT:
             http_response_builder_body(builder, (HTTP_String) { result.str.ptr, result.str.len });
+            break;
+
+            default:
             break;
         }
     }

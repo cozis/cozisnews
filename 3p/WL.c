@@ -68,12 +68,14 @@ static bool is_hex_digit(char c)
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
+#if 0
 static char to_lower(char c)
 {
     if (c >= 'A' && c <= 'Z')
         return c - 'A' + 'a';
     return c;
 }
+#endif
 
 static int hex_digit_to_int(char c)
 {
@@ -96,6 +98,7 @@ static bool streq(String a, String b)
     return true;
 }
 
+#if 0
 static bool streqcase(String a, String b)
 {
     if (a.len != b.len)
@@ -105,7 +108,7 @@ static bool streqcase(String a, String b)
             return false;
     return true;
 }
-
+#endif
 
 #define REPORT(err, fmt, ...) report((err), __FILE__, __LINE__, fmt, ## __VA_ARGS__)
 static void report(Error *err, char *file, int line, char *fmt, ...)
@@ -158,6 +161,7 @@ static bool grow_alloc(WL_Arena *a, char *p, int new_len)
     return true;
 }
 
+#if 0
 static String copystr(String s, WL_Arena *a)
 {
     char *p = alloc(a, s.len, 1);
@@ -166,6 +170,7 @@ static String copystr(String s, WL_Arena *a)
     memcpy(p, s.ptr, s.len);
     return (String) { p, s.len };
 }
+#endif
 
 /////////////////////////////////////////////////////////////////////////
 // WRITER
@@ -188,14 +193,14 @@ static void write_raw_mem(Writer *w, void *ptr, int len)
 }
 
 static void write_raw_u8 (Writer *w, uint8_t  x) { write_raw_mem(w, &x, SIZEOF(x)); }
-static void write_raw_u16(Writer *w, uint16_t x) { write_raw_mem(w, &x, SIZEOF(x)); }
+//static void write_raw_u16(Writer *w, uint16_t x) { write_raw_mem(w, &x, SIZEOF(x)); }
 static void write_raw_u32(Writer *w, uint32_t x) { write_raw_mem(w, &x, SIZEOF(x)); }
-static void write_raw_u64(Writer *w, uint64_t x) { write_raw_mem(w, &x, SIZEOF(x)); }
-static void write_raw_s8 (Writer *w, int8_t   x) { write_raw_mem(w, &x, SIZEOF(x)); }
-static void write_raw_s16(Writer *w, int16_t  x) { write_raw_mem(w, &x, SIZEOF(x)); }
-static void write_raw_s32(Writer *w, int32_t  x) { write_raw_mem(w, &x, SIZEOF(x)); }
+//static void write_raw_u64(Writer *w, uint64_t x) { write_raw_mem(w, &x, SIZEOF(x)); }
+//static void write_raw_s8 (Writer *w, int8_t   x) { write_raw_mem(w, &x, SIZEOF(x)); }
+//static void write_raw_s16(Writer *w, int16_t  x) { write_raw_mem(w, &x, SIZEOF(x)); }
+//static void write_raw_s32(Writer *w, int32_t  x) { write_raw_mem(w, &x, SIZEOF(x)); }
 static void write_raw_s64(Writer *w, int64_t  x) { write_raw_mem(w, &x, SIZEOF(x)); }
-static void write_raw_f32(Writer *w, float    x) { write_raw_mem(w, &x, SIZEOF(x)); }
+//static void write_raw_f32(Writer *w, float    x) { write_raw_mem(w, &x, SIZEOF(x)); }
 static void write_raw_f64(Writer *w, double   x) { write_raw_mem(w, &x, SIZEOF(x)); }
 
 static void write_text(Writer *w, String str)
@@ -410,6 +415,7 @@ static bool consume_str(Scanner *s, String x)
     return true;
 }
 
+#if 0
 static void write_token(Writer *w, Token token)
 {
     switch (token.type) {
@@ -463,6 +469,7 @@ static void write_token(Writer *w, Token token)
 
     }
 }
+#endif
 
 static void parser_report(Parser *p, char *fmt, ...)
 {
@@ -1990,6 +1997,14 @@ static void write_node(Writer *w, Node *node)
         write_text(w, S(")"));
         break;
 
+        case NODE_OPER_SHOVEL:
+        write_text(w, S("("));
+        write_node(w, node->left);
+        write_text(w, S("<<"));
+        write_node(w, node->right);
+        write_text(w, S(")"));
+        break;
+
         case NODE_VALUE_INT:
         write_text_s64(w, node->ival);
         break;
@@ -3440,7 +3455,7 @@ static int write_instr(Writer *w, char *src, int len, String data)
 
 static int write_program(WL_Program program, char *dst, int cap)
 {
-    if (program.len < 3 * sizeof(uint32_t))
+    if ((uint32_t) program.len < 3 * sizeof(uint32_t))
         return -1;
 
     uint32_t magic;
@@ -3454,7 +3469,7 @@ static int write_program(WL_Program program, char *dst, int cap)
     if (magic != WL_MAGIC)
         return -1;
 
-    if (code_len + data_len + 3 * sizeof(uint32_t) != program.len)
+    if (code_len + data_len + 3 * sizeof(uint32_t) != (uint32_t) program.len)
         return -1;
 
     String code = { program.ptr + 3 * sizeof(uint32_t)           , code_len };
@@ -4529,7 +4544,7 @@ struct WL_Runtime {
 
 WL_Runtime *wl_runtime_init(WL_Arena *arena, WL_Program program)
 {
-    if (program.len < 3 * sizeof(uint32_t))
+    if ((uint32_t) program.len < 3 * sizeof(uint32_t))
         return NULL;
 
     uint32_t magic;
@@ -4631,7 +4646,7 @@ static String rt_read_str(WL_Runtime *rt)
     ASSERT(rt->state == RUNTIME_LOOP);
     uint32_t off = rt_read_u32(rt);
     uint32_t len = rt_read_u32(rt);
-    ASSERT(off + len <= rt->data.len);
+    ASSERT(off + len <= (uint32_t) rt->data.len);
     return (String) { rt->data.ptr + off, len };
 }
 
@@ -5142,6 +5157,7 @@ WL_EvalResult wl_runtime_eval(WL_Runtime *rt)
 
     switch (rt->state) {
 
+        case RUNTIME_BEGIN:
         case RUNTIME_LOOP:
         UNREACHABLE;
 
