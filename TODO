@@ -2,3 +2,4 @@ input validation to avoid XSS and injection
 only allow signup, login ecc over HTTPS
 session expiration
 mark cookies as secure
+consider SameSite=Strict

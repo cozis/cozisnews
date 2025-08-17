@@ -1,0 +1,1 @@
+This is a small scale forum website written in C. It's just a proof of concept.
