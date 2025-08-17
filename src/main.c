@@ -316,49 +316,125 @@ int http_getparami(HTTP_String body, HTTP_String str, WL_Arena *arena)
 #define SESSION_LIMIT 1024
 #define USERNAME_LIMIT 64
 
+#define RAW_SESSION_TOKEN_SIZE 32
+#define RAW_CSRF_TOKEN_SIZE 32
+
+#define SESSION_TOKEN_SIZE (2 * RAW_SESSION_TOKEN_SIZE)
+#define CSRF_TOKEN_SIZE (2 * RAW_CSRF_TOKEN_SIZE)
+
 typedef struct {
-    int sess_id;
-    int user_id;
+    int  user_id;
+    char raw_sess_token[RAW_SESSION_TOKEN_SIZE];
+    char raw_csrf_token[RAW_CSRF_TOKEN_SIZE];
 } Session;
 
 typedef struct {
     Session sessions[SESSION_LIMIT];
     int count;
-    int next_sess_id; // TODO: this should be choosen randomly and on 64 bits
 } SessionSet;
+
+#include "random.h"
 
 void session_set_init(SessionSet *set)
 {
     set->count = 0;
-    set->next_sess_id = 1;
 }
 
-int session_set_add(SessionSet *set, int user_id)
+typedef struct {
+    char data[SESSION_TOKEN_SIZE];
+} SessionToken;
+
+typedef struct {
+    char data[CSRF_TOKEN_SIZE];
+} CSRFToken;
+
+static void unpack_token(char *src, int srclen, char *dst, int dstlen)
+{
+    assert(srclen == 2 * dstlen);
+
+    for (int i = 0; i < srclen; i++) {
+        static const char table[] = "0123456789abcdef";
+        int low  = (src[i] & 0x0F) >> 0;
+        int high = (src[i] & 0xF0) >> 4;
+        dst[(i << 1) | 0] = table[high];
+        dst[(i << 1) | 1] = table[low];
+    }
+}
+
+static int pack_token(char *src, int srclen, char *dst, int dstlen)
+{
+    if (srclen & 1)
+        return -1;
+
+    assert(2 * srclen == dstlen);
+
+    for (int i = 0; i < srclen; i += 2) {
+        int high = src[i+0];
+        int low  = src[i+1];
+        if (!is_hex_digit(high) || !is_hex_digit(low))
+            return -1;
+        dst[i] = (hex_digit_to_int(high) << 4) | (hex_digit_to_int(low) << 0);
+    }
+
+    return 0;
+}
+
+int session_set_add(SessionSet *set, int user_id, SessionToken *sess_token, CSRFToken *csrf_token)
 {
     if (set->count == SESSION_LIMIT)
         return -1;
-    int sess_id = set->next_sess_id++;
-    set->sessions[set->count++] = (Session) {
-        .sess_id=sess_id,
-        .user_id=user_id,
-    };
-    return sess_id;
+
+    Session *session = &set->sessions[set->count];
+
+    int ret;
+    ret = generate_random_bytes(session->raw_sess_token, (int) sizeof(session->raw_sess_token));
+    if (ret) return -1;
+
+    ret = generate_random_bytes(session->raw_csrf_token, (int) sizeof(session->raw_csrf_token));
+    if (ret) return -1;
+
+    session->user_id = user_id;
+
+    unpack_token(
+        session->raw_csrf_token, (int) sizeof(session->raw_csrf_token),
+        csrf_token->data,        (int) sizeof(csrf_token->data)
+    );
+
+    unpack_token(
+        session->raw_sess_token, (int) sizeof(session->raw_sess_token),
+        sess_token->data,        (int) sizeof(sess_token->data)
+    );
+
+    set->count++;
+    return 0;
 }
 
-void session_set_remove(SessionSet *set, int sess_id)
+void session_set_remove(SessionSet *set, SessionToken sess_token)
 {
+    char raw_sess_token[RAW_SESSION_TOKEN_SIZE];
+    pack_token(
+        sess_token.data, (int) sizeof(sess_token.data),
+        raw_sess_token,   (int) sizeof(raw_sess_token)
+    );
+
     int i = 0;
-    while (i < set->count && set->sessions[i].sess_id != sess_id)
+    while (i < set->count && memcmp(set->sessions[i].raw_sess_token, raw_sess_token, RAW_SESSION_TOKEN_SIZE))
         i++;
     if (i == set->count)
         return;
     set->sessions[i] = set->sessions[--set->count];
 }
 
-int session_set_find(SessionSet *set, int sess_id)
+int session_set_find(SessionSet *set, SessionToken sess_token)
 {
+char raw_sess_token[RAW_SESSION_TOKEN_SIZE];
+    pack_token(
+        sess_token.data, (int) sizeof(sess_token.data),
+        raw_sess_token,   (int) sizeof(raw_sess_token)
+    );
+
     int i = 0;
-    while (i < set->count && set->sessions[i].sess_id != sess_id)
+    while (i < set->count && memcmp(set->sessions[i].raw_sess_token, raw_sess_token, RAW_SESSION_TOKEN_SIZE))
         i++;
     if (i == set->count)
         return -1;
@@ -469,23 +545,19 @@ int main(void)
         //printf("%.*s\n", req->raw.len, req->raw.ptr); // TODO
 
         // If logged in, these are set to non-negative values
-        int sess_id = -1;
+        SessionToken sess_token;
         int user_id = -1;
 
         {
             HTTP_String str = http_getcookie(req, HTTP_STR("sess_id"));
-            if (str.len > 0) {
-
-                char tmp[1<<9]; // TODO
-                memcpy(tmp, str.ptr, str.len);
-                tmp[str.len] = '\0';
-
-                sess_id = atoi(tmp);
-                if (sess_id == 0)
-                    sess_id = -1;
+            if (str.len == SESSION_TOKEN_SIZE) {
+                char tmp[RAW_SESSION_TOKEN_SIZE];
+                int ret = pack_token(str.ptr, str.len, tmp, (int) sizeof(tmp));
+                if (ret) {
+                    memcpy(sess_token.data, str.ptr, str.len);
+                    user_id = session_set_find(&sessions, sess_token);
+                }
             }
-
-            user_id = session_set_find(&sessions, sess_id);
         }
 
         HTTP_String path = req->url.path;
@@ -545,8 +617,9 @@ int main(void)
             }
             int user_id = ret;
 
-            int sess_id = session_set_add(&sessions, user_id);
-            if (sess_id < 0) {
+            CSRFToken csrf_token;
+            SessionToken sess_token;
+            if (session_set_add(&sessions, user_id, &sess_token, &csrf_token) < 0) {
                 http_response_builder_status(builder, 200);
                 http_response_builder_body(builder, HTML_STR((
                     <div class="error">
@@ -558,7 +631,7 @@ int main(void)
             }
 
             char cookie[1<<9];
-            int cookie_len = snprintf(cookie, sizeof(cookie), "Set-Cookie: sess_id=%d; Path=/; HttpOnly", sess_id);
+            int cookie_len = snprintf(cookie, sizeof(cookie), "Set-Cookie: sess_id=%.*s; Path=/; HttpOnly", (int) sizeof(sess_token.data)-1, sess_token.data);
             if (cookie_len < 0 || cookie_len >= (int) sizeof(cookie)) {
                 http_response_builder_status(builder, 200);
                 http_response_builder_body(builder, HTML_STR((
@@ -646,8 +719,9 @@ int main(void)
             }
             user_id = ret;
 
-            int sess_id = session_set_add(&sessions, user_id);
-            if (sess_id < 0) {
+            CSRFToken csrf_token;
+            SessionToken sess_token;
+            if (session_set_add(&sessions, user_id, &sess_token, &csrf_token) < 0) {
                 http_response_builder_status(builder, 200);
                 http_response_builder_body(builder, HTML_STR((
                     <div class="error">
@@ -659,7 +733,7 @@ int main(void)
             }
 
             char cookie[1<<9];
-            int cookie_len = snprintf(cookie, sizeof(cookie), "Set-Cookie: sess_id=%d; Path=/; HttpOnly", sess_id);
+            int cookie_len = snprintf(cookie, sizeof(cookie), "Set-Cookie: sess_id=%.*s; Path=/; HttpOnly", (int) sizeof(sess_token.data)-1, sess_token.data);
             if (cookie_len < 0 || cookie_len >= (int) sizeof(cookie)) {
                 http_response_builder_status(builder, 200);
                 http_response_builder_body(builder, HTML_STR((
@@ -683,8 +757,8 @@ int main(void)
 
         } else if (http_streq(path, HTTP_STR("/api/logout"))) {
 
-            if (sess_id != -1)
-                session_set_remove(&sessions, sess_id);
+            if (user_id != -1)
+                session_set_remove(&sessions, sess_token);
 
             http_response_builder_status(builder, 303); // TODO: Whats the correct code here?
             http_response_builder_header(builder, HTTP_STR("Set-Cookie: sess_id=; Path=/; HttpOnly"));

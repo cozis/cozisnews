@@ -1,6 +1,6 @@
 ifeq ($(OS),Windows_NT)
     EXT = .exe
-	LFLAGS = -lws2_32
+	LFLAGS = -lws2_32 -lbcrypt
 else
 	EXT = .out
 	LFLAGS =

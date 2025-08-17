@@ -2,6 +2,7 @@
 #include <string.h>
 #include <crypt_blowfish.h>
 #include "bcrypt.h"
+#include "random.h"
 
 int hash_password(char *pass, int passlen, int cost, PasswordHash *hash)
 {
@@ -11,13 +12,12 @@ int hash_password(char *pass, int passlen, int cost, PasswordHash *hash)
     memcpy(passzt, pass, passlen);
     passzt[passlen] = '\0';
 
-    unsigned char random[16] = {
-        0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, // TODO
-        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-    };
+    char random[16];
+    int ret = generate_random_bytes(random, (int) sizeof(random));
+    if (ret) return -1;
 
     char salt[30];
-    if (_crypt_gensalt_blowfish_rn("$2b$", cost, (char*) random, sizeof(random), salt, sizeof(salt)) == NULL)
+    if (_crypt_gensalt_blowfish_rn("$2b$", cost, random, sizeof(random), salt, sizeof(salt)) == NULL)
         return -1;
 
     if (_crypt_blowfish_rn(passzt, salt, hash->data, (int) sizeof(hash->data)) == NULL)
