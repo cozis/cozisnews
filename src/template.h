@@ -11,6 +11,6 @@ void           template_cache_free(TemplateCache *cache);
 
 void template_eval(HTTP_ResponseBuilder builder, int status,
     WL_String path, TemplateCache *cache, WL_Arena *arena,
-    SQLiteCache *dbcache, int user_id, int post_id);
+    SQLiteCache *dbcache, HTTP_String csrf, int user_id, int post_id);
 
 #endif // TEMPLATE_INCLUDED

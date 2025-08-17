@@ -293,7 +293,7 @@ static int query_routine(WL_Runtime *rt, SQLiteCache *dbcache)
     return 0;
 }
 
-static void push_sysvar(WL_Runtime *rt, WL_String name, SQLiteCache *dbcache, int user_id, int post_id)
+static void push_sysvar(WL_Runtime *rt, WL_String name, SQLiteCache *dbcache, HTTP_String csrf, int user_id, int post_id)
 {
     (void) dbcache;
 
@@ -310,6 +310,13 @@ static void push_sysvar(WL_Runtime *rt, WL_String name, SQLiteCache *dbcache, in
             wl_push_none(rt);
         else
             wl_push_s64(rt, post_id);
+
+    } else if (wl_streq(name, "csrf", -1)) {
+
+        if (csrf.len == 0)
+            wl_push_none(rt);
+        else
+            wl_push_str(rt, (WL_String) { csrf.ptr, csrf.len });
     }
 }
 
@@ -353,7 +360,7 @@ static int get_or_create_program(TemplateCache *cache, WL_String path, WL_Arena 
 
 void template_eval(HTTP_ResponseBuilder builder, int status,
     WL_String path, TemplateCache *cache, WL_Arena *arena,
-    SQLiteCache *dbcache, int user_id, int post_id)
+    SQLiteCache *dbcache, HTTP_String csrf, int user_id, int post_id)
 {
     http_response_builder_status(builder, status);
 
@@ -394,7 +401,7 @@ void template_eval(HTTP_ResponseBuilder builder, int status,
             return;
 
             case WL_EVAL_SYSVAR:
-            push_sysvar(rt, result.str, dbcache, user_id, post_id);
+            push_sysvar(rt, result.str, dbcache, csrf, user_id, post_id);
             break;
 
             case WL_EVAL_SYSCALL:

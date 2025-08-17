@@ -9,6 +9,7 @@
 #include "sqlite3.h"
 #include "sqlite3utils.h"
 #include "template.h"
+#include "session.h"
 
 #define WL_STR(X) ((WL_String) { (X), (int) sizeof(X)-1})
 
@@ -313,133 +314,7 @@ int http_getparami(HTTP_String body, HTTP_String str, WL_Arena *arena)
     return buf;
 }
 
-#define SESSION_LIMIT 1024
 #define USERNAME_LIMIT 64
-
-#define RAW_SESSION_TOKEN_SIZE 32
-#define RAW_CSRF_TOKEN_SIZE 32
-
-#define SESSION_TOKEN_SIZE (2 * RAW_SESSION_TOKEN_SIZE)
-#define CSRF_TOKEN_SIZE (2 * RAW_CSRF_TOKEN_SIZE)
-
-typedef struct {
-    int  user_id;
-    char raw_sess_token[RAW_SESSION_TOKEN_SIZE];
-    char raw_csrf_token[RAW_CSRF_TOKEN_SIZE];
-} Session;
-
-typedef struct {
-    Session sessions[SESSION_LIMIT];
-    int count;
-} SessionSet;
-
-#include "random.h"
-
-void session_set_init(SessionSet *set)
-{
-    set->count = 0;
-}
-
-typedef struct {
-    char data[SESSION_TOKEN_SIZE];
-} SessionToken;
-
-typedef struct {
-    char data[CSRF_TOKEN_SIZE];
-} CSRFToken;
-
-static void unpack_token(char *src, int srclen, char *dst, int dstlen)
-{
-    assert(srclen == 2 * dstlen);
-
-    for (int i = 0; i < srclen; i++) {
-        static const char table[] = "0123456789abcdef";
-        int low  = (src[i] & 0x0F) >> 0;
-        int high = (src[i] & 0xF0) >> 4;
-        dst[(i << 1) | 0] = table[high];
-        dst[(i << 1) | 1] = table[low];
-    }
-}
-
-static int pack_token(char *src, int srclen, char *dst, int dstlen)
-{
-    if (srclen & 1)
-        return -1;
-
-    assert(2 * srclen == dstlen);
-
-    for (int i = 0; i < srclen; i += 2) {
-        int high = src[i+0];
-        int low  = src[i+1];
-        if (!is_hex_digit(high) || !is_hex_digit(low))
-            return -1;
-        dst[i] = (hex_digit_to_int(high) << 4) | (hex_digit_to_int(low) << 0);
-    }
-
-    return 0;
-}
-
-int session_set_add(SessionSet *set, int user_id, SessionToken *sess_token, CSRFToken *csrf_token)
-{
-    if (set->count == SESSION_LIMIT)
-        return -1;
-
-    Session *session = &set->sessions[set->count];
-
-    int ret;
-    ret = generate_random_bytes(session->raw_sess_token, (int) sizeof(session->raw_sess_token));
-    if (ret) return -1;
-
-    ret = generate_random_bytes(session->raw_csrf_token, (int) sizeof(session->raw_csrf_token));
-    if (ret) return -1;
-
-    session->user_id = user_id;
-
-    unpack_token(
-        session->raw_csrf_token, (int) sizeof(session->raw_csrf_token),
-        csrf_token->data,        (int) sizeof(csrf_token->data)
-    );
-
-    unpack_token(
-        session->raw_sess_token, (int) sizeof(session->raw_sess_token),
-        sess_token->data,        (int) sizeof(sess_token->data)
-    );
-
-    set->count++;
-    return 0;
-}
-
-void session_set_remove(SessionSet *set, SessionToken sess_token)
-{
-    char raw_sess_token[RAW_SESSION_TOKEN_SIZE];
-    pack_token(
-        sess_token.data, (int) sizeof(sess_token.data),
-        raw_sess_token,   (int) sizeof(raw_sess_token)
-    );
-
-    int i = 0;
-    while (i < set->count && memcmp(set->sessions[i].raw_sess_token, raw_sess_token, RAW_SESSION_TOKEN_SIZE))
-        i++;
-    if (i == set->count)
-        return;
-    set->sessions[i] = set->sessions[--set->count];
-}
-
-int session_set_find(SessionSet *set, SessionToken sess_token)
-{
-char raw_sess_token[RAW_SESSION_TOKEN_SIZE];
-    pack_token(
-        sess_token.data, (int) sizeof(sess_token.data),
-        raw_sess_token,   (int) sizeof(raw_sess_token)
-    );
-
-    int i = 0;
-    while (i < set->count && memcmp(set->sessions[i].raw_sess_token, raw_sess_token, RAW_SESSION_TOKEN_SIZE))
-        i++;
-    if (i == set->count)
-        return -1;
-    return set->sessions[i].user_id;
-}
 
 bool valid_name(HTTP_String str)
 {
@@ -529,8 +404,10 @@ int main(void)
     int pool_cap = 1<<20;
     char *pool = malloc(pool_cap);
 
-    SessionSet sessions;
-    session_set_init(&sessions);
+    SessionStorage *session_storage = session_storage_init(1024);
+    if (session_storage == NULL) {
+        return -1;
+    }
 
     for (;;) {
 
@@ -542,22 +419,17 @@ int main(void)
 
         WL_Arena arena = { pool, pool_cap, 0 };
 
-        //printf("%.*s\n", req->raw.len, req->raw.ptr); // TODO
+        printf("%.*s\n", req->raw.len, req->raw.ptr); // TODO
 
-        // If logged in, these are set to non-negative values
-        SessionToken sess_token;
-        int user_id = -1;
+        int user_id;
+        HTTP_String sess;
+        HTTP_String csrf;
 
-        {
-            HTTP_String str = http_getcookie(req, HTTP_STR("sess_id"));
-            if (str.len == SESSION_TOKEN_SIZE) {
-                char tmp[RAW_SESSION_TOKEN_SIZE];
-                int ret = pack_token(str.ptr, str.len, tmp, (int) sizeof(tmp));
-                if (ret) {
-                    memcpy(sess_token.data, str.ptr, str.len);
-                    user_id = session_set_find(&sessions, sess_token);
-                }
-            }
+        sess = http_getcookie(req, HTTP_STR("sess_token"));
+        if (find_session(session_storage, sess, &csrf, &user_id) < 0) {
+            user_id = -1;
+            sess = (HTTP_String) { NULL, 0 };
+            csrf = (HTTP_String) { NULL, 0 };
         }
 
         HTTP_String path = req->url.path;
@@ -617,9 +489,9 @@ int main(void)
             }
             int user_id = ret;
 
-            CSRFToken csrf_token;
-            SessionToken sess_token;
-            if (session_set_add(&sessions, user_id, &sess_token, &csrf_token) < 0) {
+            HTTP_String sess;
+            HTTP_String csrf;
+            if (create_session(session_storage, user_id, &sess, &csrf) < 0) {
                 http_response_builder_status(builder, 200);
                 http_response_builder_body(builder, HTML_STR((
                     <div class="error">
@@ -630,8 +502,9 @@ int main(void)
                 continue;
             }
 
+            // TODO: set cookie as secure
             char cookie[1<<9];
-            int cookie_len = snprintf(cookie, sizeof(cookie), "Set-Cookie: sess_id=%.*s; Path=/; HttpOnly", (int) sizeof(sess_token.data)-1, sess_token.data);
+            int cookie_len = snprintf(cookie, sizeof(cookie), "Set-Cookie: sess_token=%.*s; Path=/; HttpOnly", sess.len, sess.ptr);
             if (cookie_len < 0 || cookie_len >= (int) sizeof(cookie)) {
                 http_response_builder_status(builder, 200);
                 http_response_builder_body(builder, HTML_STR((
@@ -719,9 +592,9 @@ int main(void)
             }
             user_id = ret;
 
-            CSRFToken csrf_token;
-            SessionToken sess_token;
-            if (session_set_add(&sessions, user_id, &sess_token, &csrf_token) < 0) {
+            HTTP_String sess;
+            HTTP_String csrf;
+            if (create_session(session_storage, user_id, &sess, &csrf) < 0) {
                 http_response_builder_status(builder, 200);
                 http_response_builder_body(builder, HTML_STR((
                     <div class="error">
@@ -732,8 +605,9 @@ int main(void)
                 continue;
             }
 
+            // TODO: set cookie as secure
             char cookie[1<<9];
-            int cookie_len = snprintf(cookie, sizeof(cookie), "Set-Cookie: sess_id=%.*s; Path=/; HttpOnly", (int) sizeof(sess_token.data)-1, sess_token.data);
+            int cookie_len = snprintf(cookie, sizeof(cookie), "Set-Cookie: sess_token=%.*s; Path=/; HttpOnly", sess.len, sess.ptr);
             if (cookie_len < 0 || cookie_len >= (int) sizeof(cookie)) {
                 http_response_builder_status(builder, 200);
                 http_response_builder_body(builder, HTML_STR((
@@ -758,10 +632,11 @@ int main(void)
         } else if (http_streq(path, HTTP_STR("/api/logout"))) {
 
             if (user_id != -1)
-                session_set_remove(&sessions, sess_token);
+                delete_session(session_storage, sess);
 
+            // TODO: set cookie as secure
             http_response_builder_status(builder, 303); // TODO: Whats the correct code here?
-            http_response_builder_header(builder, HTTP_STR("Set-Cookie: sess_id=; Path=/; HttpOnly"));
+            http_response_builder_header(builder, HTTP_STR("Set-Cookie: sess_token=; Path=/; HttpOnly"));
             http_response_builder_header(builder, HTTP_STR("Location: /index"));
             http_response_builder_done(builder);
 
@@ -783,10 +658,18 @@ int main(void)
             HTTP_String title   = http_getparam(req->body, HTTP_STR("title"),   &arena);
             HTTP_String link    = http_getparam(req->body, HTTP_STR("link"),    &arena);
             HTTP_String content = http_getparam(req->body, HTTP_STR("content"), &arena);
+            HTTP_String csrf2   = http_getparam(req->body, HTTP_STR("csrf"),    &arena);
 
             title   = http_trim(title);
             link    = http_trim(link);
             content = http_trim(content);
+
+            if (!http_streq(csrf, csrf2)) {
+                http_response_builder_status(builder, 400);
+                http_response_builder_body(builder, HTTP_STR("Invalid request"));
+                http_response_builder_done(builder);
+                continue;
+            }
 
             if (!valid_post_title(title)) {
                 http_response_builder_status(builder, 200);
@@ -923,6 +806,14 @@ int main(void)
             int         parent_post    = http_getparami(req->body, HTTP_STR("parent_post"),    &arena);
             int         parent_comment = http_getparami(req->body, HTTP_STR("parent_comment"), &arena);
             HTTP_String content        = http_getparam (req->body, HTTP_STR("content"),        &arena);
+            HTTP_String csrf2          = http_getparam(req->body,  HTTP_STR("csrf"),           &arena);
+
+            if (!http_streq(csrf, csrf2)) {
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTTP_STR("Invalid request"));
+                http_response_builder_done(builder);
+                continue;
+            }
 
             content = http_trim(content);
             if (!valid_comment_content(content)) {
@@ -997,7 +888,7 @@ int main(void)
 
         } else if (http_streq(path, HTTP_STR("/index"))) {
 
-            template_eval(builder, 200, WL_STR("pages/index.wl"), tpcache, &arena, dbcache, user_id, -1);
+            template_eval(builder, 200, WL_STR("pages/index.wl"), tpcache, &arena, dbcache, csrf, user_id, -1);
 
         } else if (http_streq(path, HTTP_STR("/write"))) {
 
@@ -1009,7 +900,7 @@ int main(void)
                 continue;
             }
 
-            template_eval(builder, 200, WL_STR("pages/write.wl"), tpcache, &arena, dbcache, user_id, -1);
+            template_eval(builder, 200, WL_STR("pages/write.wl"), tpcache, &arena, dbcache, csrf, user_id, -1);
 
         } else if (http_streq(path, HTTP_STR("/login"))) {
 
@@ -1021,7 +912,7 @@ int main(void)
                 continue;
             }
 
-            template_eval(builder, 200, WL_STR("pages/login.wl"), tpcache, &arena, dbcache, user_id, -1);
+            template_eval(builder, 200, WL_STR("pages/login.wl"), tpcache, &arena, dbcache, csrf, user_id, -1);
 
         } else if (http_streq(path, HTTP_STR("/signup"))) {
 
@@ -1033,13 +924,13 @@ int main(void)
                 continue;
             }
 
-            template_eval(builder, 200, WL_STR("pages/signup.wl"), tpcache, &arena, dbcache, user_id, -1);
+            template_eval(builder, 200, WL_STR("pages/signup.wl"), tpcache, &arena, dbcache, csrf, user_id, -1);
 
         } else if (http_streq(path, HTTP_STR("/post"))) {
 
             int post_id = http_getparami(req->url.query, HTTP_STR("id"), &arena);
             if (post_id < 0) {
-                template_eval(builder, 404, WL_STR("pages/notfound.wl"), tpcache, &arena, dbcache, user_id, -1);
+                template_eval(builder, 404, WL_STR("pages/notfound.wl"), tpcache, &arena, dbcache, csrf, user_id, -1);
                 continue;
             }
 
@@ -1074,18 +965,19 @@ int main(void)
             }
 
             if (num == 0) {
-                template_eval(builder, 404, WL_STR("pages/notfound.wl"), tpcache, &arena, dbcache, user_id, -1);
+                template_eval(builder, 404, WL_STR("pages/notfound.wl"), tpcache, &arena, dbcache, csrf, user_id, -1);
                 continue;
             }
 
-            template_eval(builder, 200, WL_STR("pages/post.wl"), tpcache, &arena, dbcache, user_id, post_id);
+            template_eval(builder, 200, WL_STR("pages/post.wl"), tpcache, &arena, dbcache, csrf, user_id, post_id);
 
         } else {
 
-            template_eval(builder, 404, WL_STR("pages/notfound.wl"), tpcache, &arena, dbcache, user_id, -1);
+            template_eval(builder, 404, WL_STR("pages/notfound.wl"), tpcache, &arena, dbcache, csrf, user_id, -1);
         }
     }
 
+    session_storage_free(session_storage);
     sqlite_cache_free(dbcache);
     template_cache_free(tpcache);
     sqlite3_close(db);

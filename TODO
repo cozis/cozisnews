@@ -1,5 +1,4 @@
-bcrypt passwords
-session management using proper random tokens
-CSRF protection
 input validation to avoid XSS and injection
 only allow signup, login ecc over HTTPS
+session expiration
+mark cookies as secure

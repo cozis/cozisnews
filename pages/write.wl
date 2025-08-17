@@ -59,6 +59,8 @@ let style =
 let main =
     <main>
         <form action="/api/post" method="POST">
+
+            <input type="hidden" name="csrf" value=\'"'\$csrf\'"' />
             <input type="text" id="title" name="title" placeholder="Title" required />
             
             <div class="checkbox-row">
