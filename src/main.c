@@ -4,8 +4,9 @@
 #include <assert.h>
 #include <limits.h>
 #include <stdbool.h>
-#include "sqlite3.h"
 #include "chttp.h"
+#include "bcrypt.h"
+#include "sqlite3.h"
 #include "sqlite3utils.h"
 #include "template.h"
 
@@ -45,9 +46,13 @@ int load_file(char *file, char **data, long *size)
 
 int create_user(SQLiteCache *dbcache, HTTP_String name, HTTP_String email, HTTP_String pass)
 {
+    PasswordHash hash;
+    int ret = hash_password(pass.ptr, pass.len, 12, &hash);
+    if (ret) return -500;
+
     sqlite3_stmt *stmt;
-    int ret = sqlite3utils_prepare_and_bind(dbcache, &stmt,
-        "INSERT INTO Users(username, email, password) VALUES (?, ?, ?)", name, email, pass);
+    ret = sqlite3utils_prepare_and_bind(dbcache, &stmt,
+        "INSERT INTO Users(username, email, hash) VALUES (?, ?, ?)", name, email, ((HTTP_String) { hash.data, strlen(hash.data) }));
     if (ret != SQLITE_OK)
         return -500;
 
@@ -80,7 +85,7 @@ int user_exists(SQLiteCache *dbcache, HTTP_String name, HTTP_String pass)
 {
     sqlite3_stmt *stmt;
     int ret = sqlite3utils_prepare_and_bind(dbcache, &stmt,
-        "SELECT id FROM Users WHERE username=? AND password=?", name, pass);
+        "SELECT id, hash FROM Users WHERE username=?", name);
     if (ret != SQLITE_OK)
         return -500;
 
@@ -98,6 +103,30 @@ int user_exists(SQLiteCache *dbcache, HTTP_String name, HTTP_String pass)
     if (user_id < 0) {
         sqlite3_reset(stmt);
         return -500;
+    }
+
+    const char *rawhash = (const char*) sqlite3_column_text(stmt, 1);
+    if (rawhash == NULL) {
+        sqlite3_reset(stmt);
+        return -500;
+    }
+    int rawhashlen = sqlite3_column_bytes(stmt, 1);
+
+    PasswordHash hash;
+    if (rawhashlen >= sizeof(hash.data)) {
+        sqlite3_reset(stmt);
+        return -500;
+    }
+    strcpy(hash.data, rawhash);
+
+    ret = check_password(pass.ptr, pass.len, hash);
+    if (ret < 0) {
+        sqlite3_reset(stmt);
+        return -500;
+    }
+    if (ret > 0) {
+        sqlite3_reset(stmt);
+        return -400;
     }
 
     ret = sqlite3_reset(stmt);
@@ -382,7 +411,7 @@ int main(void)
 {
     http_global_init();
 
-    printf("%s\n", sqlite3_libversion()); 
+    printf("%s\n", sqlite3_libversion());
 
     sqlite3 *db;
     int ret = sqlite3_open(":memory:", &db);

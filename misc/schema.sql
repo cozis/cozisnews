@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS Users (
     id          INTEGER  PRIMARY KEY,
     username    TEXT     NOT NULL UNIQUE,
-    password    TEXT     NOT NULL,
+    hash        TEXT     NOT NULL,
     email       TEXT     NOT NULL UNIQUE,
     signup_time DATETIME DEFAULT CURRENT_TIMESTAMP
 );

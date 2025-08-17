@@ -83,7 +83,7 @@ static int lookup(SQLiteCache *cache, char *fmt, int fmtlen)
     return -1;
 }
 
-int sqlite3utils_prepare(SQLiteCache *cache, sqlite3_stmt **pstmt, const char *fmt, int fmtlen)
+int sqlite3utils_prepare(SQLiteCache *cache, sqlite3_stmt **pstmt, char *fmt, int fmtlen)
 {
     if (fmtlen < 0)
         fmtlen = strlen(fmt);
@@ -118,7 +118,7 @@ int sqlite3utils_prepare(SQLiteCache *cache, sqlite3_stmt **pstmt, const char *f
 }
 
 int sqlite3utils_prepare_and_bind_impl(SQLiteCache *cache,
-    sqlite3_stmt **pstmt, const char *fmt, VArgs args)
+    sqlite3_stmt **pstmt, char *fmt, VArgs args)
 {
     sqlite3_stmt *stmt;
     int ret = sqlite3utils_prepare(cache, &stmt, fmt, strlen(fmt));

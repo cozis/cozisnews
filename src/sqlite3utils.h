@@ -13,9 +13,9 @@ void         sqlite_cache_free(SQLiteCache *cache);
 sqlite3*     sqlite_cache_getdb(SQLiteCache *cache);
 
 int sqlite3utils_prepare(SQLiteCache *cache,
-    sqlite3_stmt **pstmt, const char *fmt, int fmtlen);
+    sqlite3_stmt **pstmt, char *fmt, int fmtlen);
 
 int sqlite3utils_prepare_and_bind_impl(SQLiteCache *cache,
-    sqlite3_stmt **pstmt, const char *fmt, VArgs args);
+    sqlite3_stmt **pstmt, char *fmt, VArgs args);
 
 #endif // SQLITE3UTILS_INCLUDED
