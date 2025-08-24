@@ -91,8 +91,6 @@ int sqlite3utils_prepare(SQLiteCache *cache, sqlite3_stmt **pstmt, char *fmt, in
     int i = lookup(cache, fmt, fmtlen);
     if (cache->items[i].stmt == NULL) {
 
-        printf("Preparing statement [%.*s]\n", fmtlen, fmt); // TODO
-
         sqlite3_stmt *stmt;
         int ret = sqlite3_prepare_v2(cache->db, fmt, -1, &stmt, NULL);
         if (ret != SQLITE_OK) {

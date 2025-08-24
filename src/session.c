@@ -86,8 +86,6 @@ void session_storage_free(SessionStorage *storage)
     free(storage);
 }
 
-#include <stdio.h> // TODO
-
 static Session *lookup_session_slot(SessionStorage *storage, HTTP_String sess, bool find_unused)
 {
     if (find_unused && 2 * storage->count + 2 > storage->capacity)

@@ -6,7 +6,7 @@ else
 	LFLAGS =
 endif
 
-CFLAGS = -Wall -Wextra -O0 -g3 -I3p -fsanitize=address,undefined
+CFLAGS = -Wall -Wextra -O0 -g3 -I3p
 
 HFILES = $(shell find src 3p -name "*.h")
 CFILES = $(filter-out 3p/sqlite3.c, $(shell find src 3p -name "*.c"))

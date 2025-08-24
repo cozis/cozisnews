@@ -778,7 +778,8 @@ static Node *parse_html(Parser *p)
         }
 
         if (s->cur == s->len) {
-            ASSERT(0); // TODO
+            parser_report(p, "Invaid end of source inside HTML tag");
+            return NULL;
         }
         s->cur++;
 
@@ -789,7 +790,8 @@ static Node *parse_html(Parser *p)
             while (s->cur < s->len && is_space(s->src[s->cur]))
                 s->cur++;
             if (s->cur == s->len || s->src[s->cur] != '>') {
-                ASSERT(0); // TODO
+                parser_report(p, "Invalid character inside HTML closing tag");
+                return NULL;
             }
             s->cur++;
             no_body = true;
@@ -833,7 +835,8 @@ static Node *parse_html(Parser *p)
             }
 
             if (s->cur == s->len) {
-                ASSERT(0); // TODO
+                parser_report(p, "Missing closing HTML tag </%.*s>", tagname.len, tagname.ptr);
+                return NULL;
             }
             s->cur++;
 
@@ -845,17 +848,20 @@ static Node *parse_html(Parser *p)
 
                     t = next_token(p);
                     if (t.type != TOKEN_IDENT) {
-                        ASSERT(0); // TODO
+                        parser_report(p, "Missing tag name after '</'");
+                        return NULL;
                     }
                     String closing_tagname = t.sval;
 
                     if (!streq(closing_tagname, tagname)) {
-                        ASSERT(0); // TODO
+                        parser_report(p, "HTML tag mismatch (%.*s != %.*s)", tagname.len, tagname.ptr, closing_tagname.len, closing_tagname.ptr);
+                        return NULL;
                     }
 
                     t = next_token(p);
                     if (t.type != TOKEN_OPER_GRT) {
-                        ASSERT(0);
+                        parser_report(p, "Missing '>' in closing HTML tag");
+                        return NULL;
                     }
 
                     break;
@@ -2546,9 +2552,6 @@ static void cg_pop_scope(Codegen *cg)
 
         call->next = cg->free_list_calls;
         cg->free_list_calls = call;
-
-        // TODO: remove
-        ASSERT(cg->scopes[cg->num_scopes-1].calls == NULL || (cg->scopes[cg->num_scopes-1].calls - cg->calls >= 0 && cg->scopes[cg->num_scopes-1].calls - cg->calls < MAX_UNPATCHED_CALLS));
     }
 
     cg->num_syms = scope->idx_syms;
@@ -2621,9 +2624,6 @@ static void walk_node(Codegen *cg, Node *node);
 
 static void walk_expr_node(Codegen *cg, Node *node, bool one)
 {
-    // TODO: remove
-    ASSERT(cg->scopes[cg->num_scopes-1].calls == NULL || (cg->scopes[cg->num_scopes-1].calls - cg->calls >= 0 && cg->scopes[cg->num_scopes-1].calls - cg->calls < MAX_UNPATCHED_CALLS));
-
     switch (node->type) {
 
         case NODE_NESTED:
@@ -2927,9 +2927,6 @@ static void walk_expr_node(Codegen *cg, Node *node, bool one)
 
 static void walk_node(Codegen *cg, Node *node)
 {
-    // TODO: remove
-    ASSERT(cg->scopes[cg->num_scopes-1].calls == NULL || (cg->scopes[cg->num_scopes-1].calls - cg->calls >= 0 && cg->scopes[cg->num_scopes-1].calls - cg->calls < MAX_UNPATCHED_CALLS));
-
     switch (node->type) {
 
         case NODE_GLOBAL:
@@ -3586,7 +3583,9 @@ WL_AddResult wl_compiler_add(WL_Compiler *compiler, WL_String content)
             if (include->include_root == NULL) {
 
                 if (compiler->num_files == FILE_LIMIT) {
-                    ASSERT(0); // TODO
+                    snprintf(compiler->err, sizeof(compiler->err), "File limit reached");
+                    compiler->err = true;
+                    return (WL_AddResult) { .type=WL_ADD_ERROR };
                 }
 
                 // TODO: Make the path relative to the compiled file
