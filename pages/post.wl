@@ -179,13 +179,13 @@ let main =
     <main>
         <div class="thread-header">
             <div class="thread-title">
-                <span>\post.title</span>
+                <span>\escape(post.title)</span>
             </div>
             <div class="thread-meta">
-                submitted 3 hours ago by <a href="">\post.username</a> | <a href="">\len comments</a>
+                submitted 3 hours ago by <a href="">\escape(post.username)</a> | <a href="">\len(comments)</a>
             </div>
             <div class="thread-text">
-                <pre>\post.content</pre>
+                <pre>\escape(post.content)</pre>
             </div>
             <details>
                 <summary>
@@ -209,10 +209,10 @@ let main =
                 </div>
                 <div class="comment-content">
                     <div class="comment-meta">
-                        <a href="">\comment.username</a> 2 hours ago
+                        <a href="">\escape(comment.username)</a> 2 hours ago
                     </div>
                     <div class="comment-text">
-                        <pre>\comment.content</pre>
+                        <pre>\escape(comment.content)</pre>
                     </div>
                     \if $login_user_id != none:
                         <details>
@@ -235,7 +235,7 @@ let main =
                 </div>
             </div>
 
-        \if len root_comments == 0:
+        \if len(root_comments) == 0:
             <div id="no-comments">
                 No comments
             </div>
