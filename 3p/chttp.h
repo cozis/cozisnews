@@ -162,13 +162,13 @@ typedef struct {
 } HTTP_Header;
 
 typedef struct {
+    bool        secure;
 	HTTP_Method method;
 	HTTP_URL    url;
 	int         minor;
 	int         num_headers;
 	HTTP_Header headers[HTTP_MAX_HEADERS];
 	HTTP_String body;
-    HTTP_String raw;
 } HTTP_Request;
 
 typedef struct {
@@ -483,7 +483,6 @@ HTTP_Server *http_server_init_ex(HTTP_String addr, uint16_t port,
 
 void         http_server_free              (HTTP_Server *server);
 int          http_server_wait              (HTTP_Server *server, HTTP_Request **req, HTTP_ResponseBuilder *handle);
-void         http_server_set_trace         (HTTP_Server *server, bool trace);
 int          http_server_add_website       (HTTP_Server *server, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file);
 void         http_response_builder_status  (HTTP_ResponseBuilder res, int status);
 void         http_response_builder_header  (HTTP_ResponseBuilder res, HTTP_String str);

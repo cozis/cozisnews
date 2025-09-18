@@ -4,6 +4,7 @@
 // src/sec.h
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/sec.h"
 #ifndef SEC_INCLUDED
 #define SEC_INCLUDED
 
@@ -64,6 +65,7 @@ void secure_context_free(SecureContext *sec);
 // src/socket_raw.h
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/socket_raw.h"
 #ifndef SOCKET_RAW_INCLUDED
 #define SOCKET_RAW_INCLUDED
 
@@ -104,6 +106,7 @@ RAW_SOCKET listen_socket(HTTP_String addr, uint16_t port, bool reuse_addr, int b
 // src/socket.h
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/socket.h"
 #ifndef SOCKET_INCLUDED
 #define SOCKET_INCLUDED
 
@@ -184,6 +187,7 @@ void* socket_get_user_data(Socket *sock);
 // src/socket_pool.h
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/socket_pool.h"
 #ifndef SOCKET_POOL_INCLUDED
 #define SOCKET_POOL_INCLUDED
 
@@ -241,12 +245,15 @@ int socket_pool_read(SocketPool *pool, SocketHandle handle, char *dst, int len);
 
 int socket_pool_write(SocketPool *pool, SocketHandle handle, char *src, int len);
 
+bool socket_pool_secure(SocketPool *pool, SocketHandle handle);
+
 #endif // SOCKET_POOL_INCLUDED
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // src/basic.c
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/basic.c"
 #include <stddef.h>
 #include <string.h>
 
@@ -355,6 +362,7 @@ void print_bytes(HTTP_String prefix, HTTP_String src)
 // src/parse.c
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/parse.c"
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -1012,7 +1020,7 @@ static int parse_request_target(Scanner *s, HTTP_URL *url)
 	return -1;
 }
 
-bool consume_str_(Scanner *scan, HTTP_String token)
+bool consume_str(Scanner *scan, HTTP_String token)
 {
     HTTP_ASSERT(token.len > 0);
 
@@ -1035,7 +1043,7 @@ static int is_header_body(char c)
 static int parse_headers(Scanner *s, HTTP_Header *headers, int max_headers)
 {
 	int num_headers = 0;
-    while (!consume_str_(s, HTTP_STR("\r\n"))) {
+    while (!consume_str(s, HTTP_STR("\r\n"))) {
 
         // RFC 9112:
 		//   field-line = field-name ":" OWS field-value OWS
@@ -1069,7 +1077,7 @@ static int parse_headers(Scanner *s, HTTP_Header *headers, int max_headers)
         if (num_headers < max_headers)
             headers[num_headers++] = (HTTP_Header) { name, body };
 
-        if (!consume_str_(s, HTTP_STR("\r\n"))) {
+        if (!consume_str(s, HTTP_STR("\r\n"))) {
             return -1;
         }
     }
@@ -1101,10 +1109,10 @@ parse_transfer_encoding(HTTP_String src, TransferEncodingOption *dst, int max)
 
         TransferEncodingOption opt;
         if (0) {}
-        else if (consume_str_(&s, HTTP_STR("chunked")))  opt = TRANSFER_ENCODING_OPTION_CHUNKED;
-        else if (consume_str_(&s, HTTP_STR("compress"))) opt = TRANSFER_ENCODING_OPTION_COMPRESS;
-        else if (consume_str_(&s, HTTP_STR("deflate")))  opt = TRANSFER_ENCODING_OPTION_DEFLATE;
-        else if (consume_str_(&s, HTTP_STR("gzip")))     opt = TRANSFER_ENCODING_OPTION_GZIP;
+        else if (consume_str(&s, HTTP_STR("chunked")))  opt = TRANSFER_ENCODING_OPTION_CHUNKED;
+        else if (consume_str(&s, HTTP_STR("compress"))) opt = TRANSFER_ENCODING_OPTION_COMPRESS;
+        else if (consume_str(&s, HTTP_STR("deflate")))  opt = TRANSFER_ENCODING_OPTION_DEFLATE;
+        else if (consume_str(&s, HTTP_STR("gzip")))     opt = TRANSFER_ENCODING_OPTION_GZIP;
         else return -1; // Invalid option
 
         if (num == max)
@@ -1360,16 +1368,18 @@ static int parse_request(Scanner *s, HTTP_Request *req)
     if (!contains_head(s->src + s->cur, s->len - s->cur))
         return 0;
 
+    req->secure = false;
+
     if (0) {}
-    else if (consume_str_(s, HTTP_STR("GET ")))     req->method = HTTP_METHOD_GET;
-    else if (consume_str_(s, HTTP_STR("POST ")))    req->method = HTTP_METHOD_POST;
-    else if (consume_str_(s, HTTP_STR("PUT ")))     req->method = HTTP_METHOD_PUT;
-    else if (consume_str_(s, HTTP_STR("HEAD ")))    req->method = HTTP_METHOD_HEAD;
-    else if (consume_str_(s, HTTP_STR("DELETE ")))  req->method = HTTP_METHOD_DELETE;
-    else if (consume_str_(s, HTTP_STR("CONNECT "))) req->method = HTTP_METHOD_CONNECT;
-    else if (consume_str_(s, HTTP_STR("OPTIONS "))) req->method = HTTP_METHOD_OPTIONS;
-    else if (consume_str_(s, HTTP_STR("TRACE ")))   req->method = HTTP_METHOD_TRACE;
-    else if (consume_str_(s, HTTP_STR("PATCH ")))   req->method = HTTP_METHOD_PATCH;
+    else if (consume_str(s, HTTP_STR("GET ")))     req->method = HTTP_METHOD_GET;
+    else if (consume_str(s, HTTP_STR("POST ")))    req->method = HTTP_METHOD_POST;
+    else if (consume_str(s, HTTP_STR("PUT ")))     req->method = HTTP_METHOD_PUT;
+    else if (consume_str(s, HTTP_STR("HEAD ")))    req->method = HTTP_METHOD_HEAD;
+    else if (consume_str(s, HTTP_STR("DELETE ")))  req->method = HTTP_METHOD_DELETE;
+    else if (consume_str(s, HTTP_STR("CONNECT "))) req->method = HTTP_METHOD_CONNECT;
+    else if (consume_str(s, HTTP_STR("OPTIONS "))) req->method = HTTP_METHOD_OPTIONS;
+    else if (consume_str(s, HTTP_STR("TRACE ")))   req->method = HTTP_METHOD_TRACE;
+    else if (consume_str(s, HTTP_STR("PATCH ")))   req->method = HTTP_METHOD_PATCH;
     else return -1;
 
     {
@@ -1387,9 +1397,9 @@ static int parse_request(Scanner *s, HTTP_Request *req)
         s->cur = s2.cur;
     }
 
-    if (consume_str_(s, HTTP_STR(" HTTP/1.1\r\n"))) {
+    if (consume_str(s, HTTP_STR(" HTTP/1.1\r\n"))) {
         req->minor = 1;
-    } else if (consume_str_(s, HTTP_STR(" HTTP/1.0\r\n")) || consume_str_(s, HTTP_STR(" HTTP/1\r\n"))) {
+    } else if (consume_str(s, HTTP_STR(" HTTP/1.0\r\n")) || consume_str(s, HTTP_STR(" HTTP/1\r\n"))) {
         req->minor = 0;
     } else {
         return -1;
@@ -1420,9 +1430,9 @@ static int parse_response(Scanner *s, HTTP_Response *res)
 	if (!contains_head(s->src + s->cur, s->len - s->cur))
 		return 0;
 
-    if (consume_str_(s, HTTP_STR("HTTP/1.1 "))) {
+    if (consume_str(s, HTTP_STR("HTTP/1.1 "))) {
         res->minor = 1;
-    } else if (consume_str_(s, HTTP_STR("HTTP/1.0 ")) || consume_str_(s, HTTP_STR("HTTP/1 "))) {
+    } else if (consume_str(s, HTTP_STR("HTTP/1.0 ")) || consume_str(s, HTTP_STR("HTTP/1 "))) {
         res->minor = 0;
     } else {
         return -1;
@@ -1493,10 +1503,8 @@ int http_parse_request(char *src, int len, HTTP_Request *req)
 {
     Scanner s = {src, len, 0};
     int ret = parse_request(&s, req);
-    if (ret == 1) {
-        req->raw = (HTTP_String) { src, s.cur };
+    if (ret == 1)
         return s.cur;
-    }
     return ret;
 }
 
@@ -1513,6 +1521,7 @@ int http_parse_response(char *src, int len, HTTP_Response *res)
 // src/engine.c
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/engine.c"
 #include <stdio.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -2506,6 +2515,7 @@ void http_engine_undo(HTTP_Engine *eng)
 // src/cert.c
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/cert.c"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2680,6 +2690,7 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
 // src/sec.c
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/sec.c"
 #ifndef HTTP_AMALGAMATION
 #include "sec.h"
 #endif
@@ -2905,6 +2916,7 @@ int secure_context_add_cert(SecureContext *sec,
 // src/socket_raw.c
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/socket_raw.c"
 #include <string.h>
 
 #ifdef _WIN32
@@ -3016,6 +3028,7 @@ RAW_SOCKET listen_socket(HTTP_String addr, uint16_t port, bool reuse_addr, int b
 // src/socket.c
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/socket.c"
 #include <stdio.h> // snprintf
 #include <assert.h>
 #include <string.h>
@@ -3811,6 +3824,7 @@ void *socket_get_user_data(Socket *sock)
 // src/socket_pool.c
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/socket_pool.c"
 #include <assert.h>
 #include <stdlib.h>
 
@@ -4164,10 +4178,16 @@ int socket_pool_write(SocketPool *pool, SocketHandle handle, char *src, int len)
     return socket_write(&pool->socks[handle], src, len);
 }
 
+bool socket_pool_secure(SocketPool *pool, SocketHandle handle)
+{
+    return socket_secure(&pool->socks[handle]);
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////
 // src/client.c
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/client.c"
 #include <stdint.h>
 #include <assert.h>
 #include <stdlib.h>
@@ -4626,6 +4646,7 @@ HTTP_Response *http_post(HTTP_String url, HTTP_String *headers, int num_headers,
 // src/server.c
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/server.c"
 #include <stdint.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -4648,8 +4669,6 @@ typedef struct {
 
 struct HTTP_Server {
 
-    bool trace;
-
     SocketPool *socket_pool;
 
     int num_conns;
@@ -4671,8 +4690,6 @@ HTTP_Server *http_server_init_ex(HTTP_String addr, uint16_t port,
     HTTP_Server *server = malloc(sizeof(HTTP_Server));
     if (server == NULL)
         return NULL;
-
-    server->trace = false;
 
     int backlog = 32;
     bool reuse_addr = true;
@@ -4708,11 +4725,6 @@ void http_server_free(HTTP_Server *server)
 
     socket_pool_free(server->socket_pool);
     free(server);
-}
-
-void http_server_set_trace(HTTP_Server *server, bool trace)
-{
-    server->trace = trace;
 }
 
 int http_server_add_website(HTTP_Server *server, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
@@ -4784,8 +4796,6 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseBuild
                     buf = http_engine_recvbuf(&conn->engine, &len);
                     if (buf) {
                         int ret = socket_pool_read(server->socket_pool, conn->sock, buf, len);
-                        if (server->trace)
-                            print_bytes(HTTP_STR(">> "), (HTTP_String) { buf, ret });
                         http_engine_recvack(&conn->engine, ret);
                     }
                     break;
@@ -4794,8 +4804,6 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseBuild
                     buf = http_engine_sendbuf(&conn->engine, &len);
                     if (buf) {
                         int ret = socket_pool_write(server->socket_pool, conn->sock, buf, len);
-                        if (server->trace)
-                            print_bytes(HTTP_STR("<< "), (HTTP_String) { buf, ret });
                         http_engine_sendack(&conn->engine, ret);
                     }
                     break;
@@ -4837,6 +4845,8 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseBuild
     server->ready_count--;
 
     *req = http_engine_getreq(&server->conns[index].engine);
+    (*req)->secure = socket_pool_secure(server->socket_pool, server->conns[index].sock);
+
     *builder = (HTTP_ResponseBuilder) { server, index, server->conns[index].gen };
     return 0;
 }
@@ -4949,6 +4959,7 @@ void http_response_builder_done(HTTP_ResponseBuilder res)
 // src/router.c
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/router.c"
 #include <string.h>
 #include <stdlib.h>
 #include <limits.h>

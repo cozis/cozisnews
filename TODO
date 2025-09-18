@@ -1,4 +1,2 @@
-only allow signup, login ecc over HTTPS
 session expiration
-mark cookies as secure
 consider SameSite=Stricts

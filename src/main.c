@@ -392,14 +392,18 @@ int main(void)
     TemplateCache *tpcache = template_cache_init(4);
     SQLiteCache   *dbcache = sqlite_cache_init(db, 5);
 
-
     HTTP_String addr = HTTP_STR("127.0.0.1");
     uint16_t    port = 8080;
 
+    // If set, allows logins and signups over HTTP, which is highly insecure.
+    // This allows compiling the application without TLS when developing.
+    bool allow_insecure_login = true;
+
+    if (allow_insecure_login)
+        printf("WARNING: allow_insecure_login is true\n");
+
     HTTP_Server *server = http_server_init(addr, port);
     if (server == NULL) return -1;
-
-    http_server_set_trace(server, false);
 
     int pool_cap = 1<<20;
     char *pool = malloc(pool_cap);
@@ -419,8 +423,6 @@ int main(void)
 
         WL_Arena arena = { pool, pool_cap, 0 };
 
-        printf("%.*s\n", req->raw.len, req->raw.ptr); // TODO
-
         int user_id;
         HTTP_String sess;
         HTTP_String csrf;
@@ -434,6 +436,17 @@ int main(void)
 
         HTTP_String path = req->url.path;
         if (http_streq(path, HTTP_STR("/api/login"))) {
+
+            if (!req->secure && !allow_insecure_login) {
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Connection is not secure
+                    </div>
+                )));
+                http_response_builder_done(builder);
+                continue;
+            }
 
             if (req->method != HTTP_METHOD_POST) {
                 http_response_builder_status(builder, 200);
@@ -502,9 +515,8 @@ int main(void)
                 continue;
             }
 
-            // TODO: set cookie as secure
             char cookie[1<<9];
-            int cookie_len = snprintf(cookie, sizeof(cookie), "Set-Cookie: sess_token=%.*s; Path=/; HttpOnly", sess.len, sess.ptr);
+            int cookie_len = snprintf(cookie, sizeof(cookie), "Set-Cookie: sess_token=%.*s; Path=/; HttpOnly; Secure", sess.len, sess.ptr);
             if (cookie_len < 0 || cookie_len >= (int) sizeof(cookie)) {
                 http_response_builder_status(builder, 200);
                 http_response_builder_body(builder, HTML_STR((
@@ -527,6 +539,17 @@ int main(void)
             http_response_builder_done(builder);
 
         } else if (http_streq(path, HTTP_STR("/api/signup"))) {
+
+            if (!req->secure && !allow_insecure_login) {
+                http_response_builder_status(builder, 200);
+                http_response_builder_body(builder, HTML_STR((
+                    <div class="error">
+                        Connection is not secure
+                    </div>
+                )));
+                http_response_builder_done(builder);
+                continue;
+            }
 
             if (req->method != HTTP_METHOD_POST) {
                 http_response_builder_status(builder, 200);
@@ -605,9 +628,8 @@ int main(void)
                 continue;
             }
 
-            // TODO: set cookie as secure
             char cookie[1<<9];
-            int cookie_len = snprintf(cookie, sizeof(cookie), "Set-Cookie: sess_token=%.*s; Path=/; HttpOnly", sess.len, sess.ptr);
+            int cookie_len = snprintf(cookie, sizeof(cookie), "Set-Cookie: sess_token=%.*s; Path=/; HttpOnly; Secure", sess.len, sess.ptr);
             if (cookie_len < 0 || cookie_len >= (int) sizeof(cookie)) {
                 http_response_builder_status(builder, 200);
                 http_response_builder_body(builder, HTML_STR((
@@ -634,9 +656,8 @@ int main(void)
             if (user_id != -1)
                 delete_session(session_storage, sess);
 
-            // TODO: set cookie as secure
             http_response_builder_status(builder, 303); // TODO: Whats the correct code here?
-            http_response_builder_header(builder, HTTP_STR("Set-Cookie: sess_token=; Path=/; HttpOnly"));
+            http_response_builder_header(builder, HTTP_STR("Set-Cookie: sess_token=; Path=/; HttpOnly; Secure"));
             http_response_builder_header(builder, HTTP_STR("Location: /index"));
             http_response_builder_done(builder);
 
