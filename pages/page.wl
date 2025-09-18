@@ -3,7 +3,7 @@ procedure page(title, login_user_id, style, main)
     <html>
     <head>
         <meta charset="UTF-8" />
-        <title>CN - \title</title>
+        <title>CN - \escape(title)</title>
         <style>
             body {
                 line-height: 200%;

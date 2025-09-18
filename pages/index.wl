@@ -55,10 +55,10 @@ let main =
 
             <div class="item">
                 <div>
-                    <a href=\'"'\link\'"'>\post.title</a>
+                    <a href=\'"'\link\'"'>\escape(post.title)</a>
                 </div>
                 <div>
-                    <span>\post.date</span> | <span>\post.num_comments comments</span>
+                    <span>\escape(post.date)</span> | <span>\escape(post.num_comments) comments</span>
                 </div>
             </div>
         }
