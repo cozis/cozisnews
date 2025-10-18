@@ -1,7 +1,8 @@
-include "pages/page.wl"
+include "page.wl"
 
-let posts = $query("SELECT U.username, P.title, P.content FROM Posts as P, Users as U WHERE P.id=? AND U.id=P.author", $post_id)
-let comments = $query("SELECT C.id, U.username, C.content, C.parent_post, C.parent_comment FROM Comments as C, Users as U WHERE C.parent_post=? AND U.id=C.author", $post_id)
+let post_id  = $args(0)
+let posts    = $query("SELECT U.username, P.title, P.content FROM Posts as P, Users as U WHERE P.id=? AND U.id=P.author", post_id)
+let comments = $query("SELECT C.id, U.username, C.content, C.parent_post, C.parent_comment FROM Comments as C, Users as U WHERE C.parent_post=? AND U.id=C.author", post_id)
 
 let lookup = {}
 
@@ -179,13 +180,13 @@ let main =
     <main>
         <div class="thread-header">
             <div class="thread-title">
-                <span>\escape(post.title)</span>
+                <span>\{escape post.title}</span>
             </div>
             <div class="thread-meta">
-                submitted 3 hours ago by <a href="">\escape(post.username)</a> | <a href="">\len(comments)</a>
+                submitted 3 hours ago by <a href="">\{escape post.username}</a> | <a href="">\{len comments}</a>
             </div>
             <div class="thread-text">
-                <pre>\escape(post.content)</pre>
+                <pre>\{escape post.content}</pre>
             </div>
             <details>
                 <summary>
@@ -193,54 +194,56 @@ let main =
                 </summary>
                 <div class="add-comment">
                     <form action="/api/comment" method="POST">
-                        <input type="hidden" name="parent_post" value=\'"'\$post_id\'"' />
+                        <input type="hidden" name="csrf"        value="\{$csrf}" />
+                        <input type="hidden" name="parent_post" value="\{post_id}" />
                         <textarea name="content" placeholder="Add a comment..."></textarea>
                         <input type="submit" vaue="Publish" />
                     </form>
                 </div>
             </details>
         </div>
-
-        \procedure render_comment(comment)
-            <div class="comment">
-                <div class="vote-buttons">
-                    <a href="">▲</a>
-                    <a href="">▼</a>
-                </div>
-                <div class="comment-content">
-                    <div class="comment-meta">
-                        <a href="">\escape(comment.username)</a> 2 hours ago
-                    </div>
-                    <div class="comment-text">
-                        <pre>\escape(comment.content)</pre>
-                    </div>
-                    \if $login_user_id != none:
-                        <details>
-                            <summary>
-                                reply
-                            </summary>
-                            <div class="add-comment">
-                                <form action="/api/comment" method="POST">
-                                    <input type="hidden" name="parent_post"    value=\'"'\$post_id\'"' />
-                                    <input type="hidden" name="parent_comment" value=\'"'\comment.id\'"' />
-                                    <textarea name="content" placeholder="Add a comment..."></textarea>
-                                    <input type="submit" vaue="Publish" />
-                                </form>
-                            </div>
-                        </details>
-                </div>
-                <div class="comment-child">
-                \for child in comment.child:
-                    render_comment(child)
-                </div>
-            </div>
-
         \if len(root_comments) == 0:
             <div id="no-comments">
                 No comments
             </div>
         else for comment in root_comments:
-            render_comment(comment)
+            render_comment(post_id, comment)
     </main>
+
+procedure render_comment(post_id, comment) {
+    <div class="comment">
+        <div class="vote-buttons">
+            <a href="">▲</a>
+            <a href="">▼</a>
+        </div>
+        <div class="comment-content">
+            <div class="comment-meta">
+                <a href="">\{escape comment.username}</a> 2 hours ago
+            </div>
+            <div class="comment-text">
+                <pre>\{escape comment.content}</pre>
+            </div>
+            \if $login_user_id != none:
+                <details>
+                    <summary>
+                        reply
+                    </summary>
+                    <div class="add-comment">
+                        <form action="/api/comment" method="POST">
+                            <input type="hidden" name="csrf"           value="\{$csrf}" />
+                            <input type="hidden" name="parent_post"    value="\{post_id}" />
+                            <input type="hidden" name="parent_comment" value="\{comment.id}" />
+                            <textarea name="content" placeholder="Add a comment..."></textarea>
+                            <input type="submit" vaue="Publish" />
+                        </form>
+                    </div>
+                </details>
+        </div>
+        <div class="comment-child">
+        \for child in comment.child:
+            render_comment(post_id, child)
+        </div>
+    </div>
+}
 
 page(post.title, $login_user_id, style, main)

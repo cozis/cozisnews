@@ -1,23 +1,20 @@
+FLAGS = -Wall -Wextra -O0 -g3 -I.
+
 ifeq ($(OS),Windows_NT)
     EXT = .exe
-	LFLAGS = -lws2_32 -lbcrypt
+	FLAGS += -lws2_32 -lbcrypt
 else
 	EXT = .out
-	LFLAGS =
+	FLAGS += -lssl -lcrypto -fno-omit-frame-pointer -gdwarf-3 -DHTTPS_ENABLED
 endif
-
-CFLAGS = -Wall -Wextra -O0 -g3 -I3p
-
-HFILES = $(shell find src 3p -name "*.h")
-CFILES = $(filter-out 3p/sqlite3.c, $(shell find src 3p -name "*.c"))
 
 all: cozisnews$(EXT)
 
-cozisnews$(EXT): $(CFILES) $(HFILES) sqlite3.o
-	gcc -o $@ $(CFILES) sqlite3.o $(CFLAGS) $(LFLAGS)
+sqlite3.o: src/sqlite3.c
+	gcc -c -o $@ $<
 
-sqlite3.o: 3p/sqlite3.c
-	gcc -o $@ -c $<
+cozisnews$(EXT): src/main.c sqlite3.o
+	gcc -o $@ src/main.c sqlite3.o $(FLAGS) -I3p
 
 clean:
 	rm *.o *.out *.exe
